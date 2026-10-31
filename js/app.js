@@ -48,8 +48,9 @@ export class App {
   }
   saveSettings() { try { localStorage.setItem('as.settings', JSON.stringify(this.settings)); } catch { /* ignore */ } }
 
-  get sheet() { return this.wb.sheets[this.wb.active]; }
-  get defFont() { return { ff: this.wb.settings.font || 'Arial', fs: this.wb.settings.fontSize || 10 }; }
+  // wb is set only after init() has loaded it; the grid may draw (ResizeObserver) before that.
+  get sheet() { return this.wb ? this.wb.sheets[this.wb.active] : undefined; }
+  get defFont() { const s = this.wb ? this.wb.settings : {}; return { ff: s.font || 'Arial', fs: s.fontSize || 10 }; }
 
   async init() {
     initTooltips();
