@@ -17,6 +17,8 @@ import * as store from './store.js';
 import * as io from './io.js';
 import { TEMPLATES } from './templates.js';
 import * as SH from './sharing.js';
+import * as PG from './pages.js';
+import * as LK from './lock.js';
 import { shareKey, errText } from './live.js';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -119,7 +121,15 @@ export class App {
     history.replaceState(null, '', location.pathname + (guest ? '?share=' + encodeURIComponent(wb.share.key) : '?id=' + encodeURIComponent(wb.id)));
     if (!initial) this.save();
     SH.startLive(this);
-    this.grid.focus();
+    this.updateLockBadge();
+    LK.gate(this, wb);
+    if (!document.body.classList.contains('file-locked')) this.grid.focus();
+  }
+  openOther() { D.openDialog(this); }
+  updateLockBadge() {
+    let b = document.getElementById('lock-badge');
+    if (!this.wb?.lock) { b?.remove(); return; }
+    if (!b) { b = el('button.icon-btn.sm#lock-badge', { type: 'button', 'data-tip': 'Dikunci dengan kata sandi', 'aria-label': 'Keamanan file', onclick: e => openMenu(LK.menuItems(this), e.currentTarget.getBoundingClientRect()) }, icon('lock')); this.titleInput.after(b); }
   }
 
   // ---------- share links ----------
@@ -128,7 +138,7 @@ export class App {
     const cur = this.wb;
     if (!cur || !doc || !doc.sheets) return;
     const nw = Workbook.fromJSON({ ...doc, id: cur.id });
-    nw.share = cur.share; nw.hist = cur.hist; nw.hist.wb = nw;
+    nw.share = cur.share; nw.lock = cur.lock; nw.hist = cur.hist; nw.hist.wb = nw;
     const aid = cur.sheets[cur.active]?.id, i = nw.sheets.findIndex(x => x.id === aid);
     nw.active = i >= 0 ? i : Math.min(cur.active, nw.sheets.length - 1);
     const sel = this.grid.sel, sx = this.grid.scroller.scrollLeft, sy = this.grid.scroller.scrollTop;
@@ -251,6 +261,7 @@ export class App {
     this.cf.reset();
     this.cf.ver = -1;
     this.grid.g = null;
+    this.pageCache = null;
     this.grid.render();
     this.fx.sync();
     this.toolbar?.sync();
@@ -308,6 +319,7 @@ export class App {
     this.toolbar?.sync();
     this.updateStatus();
     this.showLinkChip();
+    PG.breakChip(this);
     this.sidebar?.onSel?.();
   }
 
@@ -345,7 +357,7 @@ export class App {
   }
   hideCellTip() { document.getElementById('celltip').classList.remove('show'); }
 
-  closePopups() { closeMenus(); document.getElementById('linkchip').classList.remove('show'); }
+  closePopups() { closeMenus(); document.getElementById('linkchip').classList.remove('show'); document.getElementById('pagechip')?.classList.remove('show'); }
 
   updateStatus() {
     const host = document.getElementById('stats');
@@ -507,6 +519,7 @@ export class App {
   bindKeys() {
     document.addEventListener('keydown', e => {
       if (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]') ) return;
+      if (document.body.classList.contains('file-locked')) return;
       if (document.querySelector('.dlg-back')) return;
       this.onKey(e);
     });
@@ -870,7 +883,9 @@ export class App {
     document.getElementById('app-logo').addEventListener('click', () => D.openDialog(this));
     document.getElementById('btn-history').addEventListener('click', () => this.sidebar.open('versions'));
     window.addEventListener('beforeunload', () => { if (this.wb?.dirty) store.saveDoc(this.wb); });
-    window.addEventListener('resize', () => this.showLinkChip());
+    window.addEventListener('resize', () => { this.showLinkChip(); PG.breakChip(this); });
+    const chipLater = debounce(() => PG.breakChip(this), 120);
+    this.grid.scroller.addEventListener('scroll', () => { document.getElementById('pagechip')?.classList.remove('show'); chipLater(); }, { passive: true });
     // drag & drop files
     document.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); document.body.classList.add('dropping'); } });
     document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
@@ -1159,7 +1174,7 @@ export const COMMANDS = {
   print: app => io.printView(app),
   repeat: app => { const a = app.lastAction; if (a) COMMANDS[a[0]](app, ...a.slice(1)); },
   newDoc: (app, tpl = 'blank') => { app.save(); const t = TEMPLATES.find(x => x.id === tpl) || TEMPLATES[0]; app.openWorkbook(t.build()); },
-  makeCopy: app => { app.save(); const wb = Workbook.fromJSON(app.wb.toJSON()); wb.id = uid('wb'); wb.name = 'Salinan dari ' + app.wb.name; app.openWorkbook(wb); toast('Salinan dibuat'); },
+  makeCopy: app => { app.save(); const wb = Workbook.fromJSON(app.wb.toJSON()); wb.id = uid('wb'); wb.lock = app.wb.lock; wb.name = 'Salinan dari ' + app.wb.name; app.openWorkbook(wb); toast('Salinan dibuat'); },
   setLocale: (app, id) => app.tx('Lokal', () => { app.wb.hist.touchWb(); app.wb.settings.locale = id; setLocale(id); app.grid.measureCache.clear(); }),
   defaultFont: (app, ff, fs) => app.tx('Font default', () => { app.wb.settings.font = ff; app.wb.settings.fontSize = fs; app.wb.dirty = true; app.grid.measureCache.clear(); }),
   banding: (app, preset, opts = {}) => {

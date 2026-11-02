@@ -8,6 +8,8 @@ import * as D from './dialogs.js';
 import * as io from '../io.js';
 import { THEME_FONTS } from './toolbar.js';
 import * as SH from '../sharing.js';
+import * as PG from '../pages.js';
+import * as LK from '../lock.js';
 
 const M = () => window.amatu?.MOD || 'Ctrl';
 
@@ -120,7 +122,11 @@ export function menus(app) {
       ] },
       { label: 'Hapus', icon: 'delete', run: () => D.deleteDocDialog(app) },
       { sep: true },
+      { label: 'Keamanan file', icon: 'lock', sub: () => LK.menuItems(app) },
       { label: 'Setelan', icon: 'settings', run: () => D.settingsDialog(app) },
+      { sep: true },
+      { label: 'Penyiapan halaman (kertas & margin)…', icon: 'description', run: () => PG.setupDialog(app) },
+      { label: 'Pratinjau cetak', icon: 'preview', run: () => PG.printPages(app, { sheets: [app.sheet] }) },
       { label: 'Cetak', icon: 'print', kbd: `${M()}+P`, run: () => io.printView(app) },
     ],
     Edit: [
@@ -149,6 +155,8 @@ export function menus(app) {
         { label: 'Garis kisi', checked: () => app.sheet.grid, run: () => app.cmd('toggleGridlines') },
         { label: 'Rumus', kbd: `${M()}+\``, checked: () => app.showFormulas, run: () => app.cmd('toggleFormulas') },
         { label: 'Sel yang bisa diedit pelihat', checked: () => !!app.settings.showVE, run: () => app.cmd('toggleShowVE') },
+        { label: 'Pemisah halaman', checked: () => !!app.settings.breaks, run: () => PG.showBreaks(app, !app.settings.breaks) },
+        { label: 'Saran saat tabel terpotong halaman', checked: () => app.settings.breakTips !== false, run: () => { app.settings.breakTips = app.settings.breakTips === false; app.saveSettings(); app.onSelChange(); } },
         { label: 'Bilah formula', checked: () => !document.body.classList.contains('no-fx'), run: () => { document.body.classList.toggle('no-fx'); app.grid.resize(); } },
         { label: 'Bilah alat', checked: () => !document.body.classList.contains('no-toolbar'), run: () => { document.body.classList.toggle('no-toolbar'); app.grid.resize(); } },
       ] },
@@ -231,6 +239,7 @@ export function menus(app) {
       ] },
       { label: 'Hapus format', icon: 'format_clear', kbd: `${M()}+\\`, run: () => app.cmd('clear', 'formats') },
     ],
+    'Tata letak': () => PG.layoutMenu(app),
     Data: [
       { label: 'Urutkan sheet', icon: 'sort', sub: () => [
         { label: `Urutkan sheet menurut kolom ${colName(app.grid.sel.c)} (A–Z)`, run: () => app.cmd('sortSheet', true) },
@@ -381,6 +390,7 @@ export function cellContextMenu(app) {
     { label: 'Dropdown', icon: 'arrow_drop_down_circle', run: () => app.cmd('insertDropdown') },
     { label: 'Diagram', icon: 'insert_chart', run: () => app.sidebar.open('chart', { create: true }) },
     { sep: true },
+    { label: 'Halaman cetak', icon: 'insert_page_break', sub: () => PG.layoutMenu(app).filter(x => x.sep || ['move_down', 'content_cut', 'horizontal_rule', 'title', 'insert_page_break', 'tune'].includes(x.icon)) },
     { label: 'Lihat tindakan sel lainnya', icon: 'more_horiz', sub: [
       { label: 'Format sel…', icon: 'tune', kbd: `${M()}+1`, run: () => D.formatCellsDialog(app) },
       { label: 'Tentukan rentang bernama', icon: 'label', run: () => app.sidebar.open('names', { define: true }) },

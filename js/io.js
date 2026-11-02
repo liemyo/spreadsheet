@@ -1,5 +1,6 @@
 // Import/export, printing and data helpers (current region, flash fill, shuffle).
 import { el, icon, key, keyR, keyC, colName, loadScript, LIBS, download, esc, rangeAddr } from './util.js';
+import * as PG from './pages.js';
 import { Workbook, newWorkbook, setInput } from './model.js';
 import { parseInput, format, compile } from './format.js';
 import { FErr } from './formula/core.js';
@@ -378,6 +379,7 @@ export async function exportXLSX(app, bookType = 'xlsx') {
     const rows = [];
     for (let r = 0; r <= Math.max(R, ...sh.rowH.keys(), 0); r++) rows.push(sh.rowH.has(r) || sh.hiddenR.has(r) ? { hpx: sh.rowH.get(r) ?? 21, hidden: sh.hiddenR.has(r) || undefined } : {});
     ws['!rows'] = rows;
+    if (sh.page?.m) { const m = sh.page.m, i = v => +(v / 2.54).toFixed(3); ws['!margins'] = { left: i(m.l), right: i(m.r), top: i(m.t), bottom: i(m.b), header: 0.3, footer: 0.3 }; }
     if (sh.filter) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: sh.filter.r1, c: sh.filter.c1 }, e: { r: sh.filter.r2, c: sh.filter.c2 } }) };
     let name = sh.name.replace(/[[\]*?/\\:]/g, ' ').slice(0, 31) || 'Sheet';
     let n = 2; while (out.SheetNames.includes(name)) name = name.slice(0, 28) + ' ' + n++;
@@ -391,23 +393,32 @@ function cssBorder(b) { return b ? `${b.style === 'double' ? 3 : b.w || 1}px ${b
 
 export function sheetHTML(app, sh, g, opts = {}) {
   const wb = app.wb;
+  // opts.clip: merges are cut to the range g (a printed page), the cut part shows the merged cell's content
   const merged = new Map();
-  for (const m of sh.merges) merged.set(key(m.r1, m.c1), m);
   const skip = new Set();
-  for (const m of sh.merges) for (let r = m.r1; r <= m.r2; r++) for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) skip.add(key(r, c));
-  let html = `<table class="sheet${opts.grid ? ' grid' : ''}"><colgroup>`;
+  for (const m0 of sh.merges) {
+    const m = opts.clip ? { r1: Math.max(m0.r1, g.r1), c1: Math.max(m0.c1, g.c1), r2: Math.min(m0.r2, g.r2), c2: Math.min(m0.c2, g.c2), src: m0 } : m0;
+    if (m.r1 > m.r2 || m.c1 > m.c2) continue;
+    merged.set(key(m.r1, m.c1), m);
+    for (let r = m.r1; r <= m.r2; r++) for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) skip.add(key(r, c));
+  }
+  let tw = 0;
+  for (let c = g.c1; c <= g.c2; c++) tw += sh.colWidth(c);
+  let html = `<table class="sheet${opts.grid ? ' grid' : ''}"${opts.clip ? ` style="width:${tw}px"` : ''}><colgroup>`;
   for (let c = g.c1; c <= g.c2; c++) if (!sh.hiddenC.has(c)) html += `<col style="width:${sh.colWidth(c)}px">`;
   html += '</colgroup>';
   for (let r = g.r1; r <= g.r2; r++) {
     if (sh.isRowHidden(r)) continue;
-    const h = sh.rowH.get(r);
+    const h = opts.clip ? sh.rowHeight(r) : sh.rowH.get(r);
     html += `<tr${h ? ` style="height:${h}px"` : ''}>`;
     for (let c = g.c1; c <= g.c2; c++) {
       if (sh.hiddenC.has(c) || skip.has(key(r, c))) continue;
-      const cell = sh.get(r, c);
+      const mm = merged.get(key(r, c));
+      const [sr, sc] = mm?.src ? [mm.src.r1, mm.src.c1] : [r, c];
+      const cell = sh.get(sr, sc);
       const st = wb.styles[cell ? cell.s : 0] || {};
-      const cfr = app.cf.result(sh, r, c) || {};
-      const m = merged.get(key(r, c));
+      const cfr = app.cf.result(sh, sr, sc) || {};
+      const m = mm;
       const v = cell ? (cell.f != null ? cell.sv : cell.v) : sh.spillMap.get(key(r, c))?.v;
       const css = [];
       const bg = cfr.bg || st.bg || app.bandingFor(sh, r, c);
@@ -420,10 +431,12 @@ export function sheetHTML(app, sh, g, opts = {}) {
       css.push('text-align:' + (st.ha || (typeof v === 'number' ? 'right' : typeof v === 'boolean' ? 'center' : 'left')));
       css.push('vertical-align:' + (st.va === 'middle' ? 'middle' : st.va || 'bottom'));
       if (st.wrap === 'wrap') css.push('white-space:pre-wrap');
+      // text spills into empty cells on its right, as on the grid
+      else if (!st.wrap && !m && typeof v === 'string' && (st.ha || 'left') === 'left' && c < g.c2 && !sh.get(r, c + 1)?.v && sh.get(r, c + 1)?.f == null && !merged.has(key(r, c + 1)) && !skip.has(key(r, c + 1))) css.push('overflow:visible;position:relative;z-index:1');
       if (st.bt) css.push('border-top:' + cssBorder(st.bt)); if (st.bb) css.push('border-bottom:' + cssBorder(st.bb));
       if (st.bl) css.push('border-left:' + cssBorder(st.bl)); if (st.br) css.push('border-right:' + cssBorder(st.br));
       const span = m ? ` rowspan="${m.r2 - m.r1 + 1}" colspan="${m.c2 - m.c1 + 1}"` : '';
-      let text = esc(cellDisplay(app, sh, r, c)).replace(/\n/g, '<br>');
+      let text = esc(cellDisplay(app, sh, sr, sc)).replace(/\n/g, '<br>');
       if (cell?.link) text = `<a href="${esc(cell.link)}">${text}</a>`;
       if (v instanceof Special && v.kind === 'image') text = `<img src="${esc(v.data.url)}" style="max-width:100%;max-height:100%">`;
       html += `<td${span} style="${css.join(';')}">${text}</td>`;
@@ -448,28 +461,17 @@ export function printView(app) {
   const sh = app.sheet;
   const selG = app.grid.range;
   const hasSel = selG.r1 !== selG.r2 || selG.c1 !== selG.c2;
-  let scope = hasSel ? 'sel' : 'sheet', orient = 'portrait', fit = 'width', grid = true, title = true;
+  let scope = hasSel ? 'sel' : 'sheet';
+  const L = PG.layout(app, sh), P = L.p;
+  const info = el('div.muted.small', `${PG.PAPER[P.size]?.n || 'A4'} ${P.orient === 'landscape' ? 'lanskap' : 'potret'} · margin ${[P.m.t, P.m.b, P.m.l, P.m.r].map(x => String(+x.toFixed(2)).replace('.', ',')).join(' / ')} cm · ${P.fit === 'width' ? 'sesuai lebar' : P.fit === 'page' ? '1 halaman' : P.scale + '%'}${P.auto ? ' · tabel tidak dipotong' : ''}`);
   dialog({
-    title: 'Setelan cetak', width: 420,
+    title: 'Cetak', width: 440,
     body: el('div.stack',
       field('Cetak', select([{ value: 'sheet', label: 'Sheet saat ini' }, { value: 'all', label: 'Seluruh workbook' }, ...(hasSel ? [{ value: 'sel', label: `Sel yang dipilih (${rangeAddr(selG)})` }] : [])], scope, v => (scope = v))),
-      el('div.grid2',
-        field('Orientasi', select([{ value: 'portrait', label: 'Potret' }, { value: 'landscape', label: 'Lanskap' }], orient, v => (orient = v))),
-        field('Skala', select([{ value: 'normal', label: 'Normal (100%)' }, { value: 'width', label: 'Sesuaikan dengan lebar' }], fit, v => (fit = v)))),
-      el('div.checks', checkbox('Tampilkan garis kisi', true, v => (grid = v)), checkbox('Tampilkan judul spreadsheet', true, v => (title = v)))),
-    buttons: [{ label: 'Batal' }, { label: 'Lanjut', primary: true, run: () => {
-      const sheets = scope === 'all' ? app.wb.sheets.filter(s => !s.hidden) : [sh];
-      let body = title ? `<h1>${esc(app.wb.name)}</h1><div class="meta">Dicetak ${new Date().toLocaleString('id-ID')}</div>` : '';
-      for (const s of sheets) {
-        const g = scope === 'sel' ? selG : s.usedRange() || { r1: 0, c1: 0, r2: 0, c2: 0 };
-        if (sheets.length > 1) body += `<h2>${esc(s.name)}</h2>`;
-        body += app.withSheet(s, () => sheetHTML(app, s, g, { grid }));
-      }
-      const w = window.open('', '_blank');
-      if (!w) { toast('Izinkan pop-up untuk mencetak'); return; }
-      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(app.wb.name)}</title><style>${PRINT_CSS}@page{size:A4 ${orient};margin:12mm}${fit === 'width' ? 'table.sheet{width:100%}' : ''}</style></head><body><button class="noprint" onclick="print()">Cetak / Simpan PDF</button>${body}</body></html>`);
-      w.document.close();
-      setTimeout(() => { try { w.focus(); w.print(); } catch { /* user can press the button */ } }, 400);
+      info),
+    buttons: [{ label: 'Kertas & margin…', run: () => { PG.setupDialog(app); } }, { spacer: true }, { label: 'Batal' }, { label: 'Lanjut', primary: true, run: () => {
+      if (scope === 'all') PG.printPages(app, { sheets: app.wb.sheets.filter(s => !s.hidden), auto: true });
+      else PG.printPages(app, { sheets: [sh], area: scope === 'sel' ? { r1: selG.r1, c1: selG.c1, r2: selG.r2, c2: selG.c2 } : null, auto: true });
     } }],
   });
 }

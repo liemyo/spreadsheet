@@ -5,6 +5,7 @@ import { FErr } from './formula/core.js';
 import { Special } from './formula/functions.js';
 import { lex, autoClose } from './formula/parse.js';
 import { dvAt, dvItems, CHIP_COLORS } from './cf.js';
+import { layout as pageLayout } from './pages.js';
 
 export const HH = 24;
 export const REF_COLORS = ['#1a73e8', '#d93025', '#8430ce', '#188038', '#e37400', '#c5221f', '#129eaf', '#b06000'];
@@ -783,6 +784,49 @@ export class Grid {
   }
 
   // selection, copy marquee, formula reference highlights, fill preview
+  // Page layout: dashed = automatic page break, solid = manual, grey frame = printed range.
+  drawPageBreaks(q) {
+    const ctx = this.ctx, sh = this.sh, L = pageLayout(this.app, sh), g = L.g;
+    if (!g) return;
+    const lw = 1.5 / this.z, col = '#1a73e8';
+    const x1 = Math.max(q.x, this.X(g.c1)), x2 = Math.min(q.x + q.w, this.X(g.c2 + 1));
+    const y1 = Math.max(q.y, this.Y(g.r1)), y2 = Math.min(q.y + q.h, this.Y(g.r2 + 1));
+    const line = (ax, ay, bx, by, manual) => {
+      ctx.strokeStyle = col; ctx.lineWidth = manual ? 2.5 / this.z : lw; ctx.setLineDash(manual ? [] : [6 / this.z, 4 / this.z]);
+      ctx.beginPath(); ctx.moveTo(this.px(ax), this.px(ay)); ctx.lineTo(this.px(bx), this.px(by)); ctx.stroke();
+    };
+    ctx.save();
+    // printed range frame
+    ctx.strokeStyle = '#80868b'; ctx.lineWidth = lw; ctx.setLineDash([2 / this.z, 3 / this.z]);
+    ctx.beginPath();
+    const fx = this.px(this.X(g.c2 + 1)), fy = this.px(this.Y(g.r2 + 1));
+    if (g.c2 + 1 >= q.c0 && g.c2 + 1 <= q.c1 + 1) { ctx.moveTo(fx, y1); ctx.lineTo(fx, y2); }
+    if (g.r2 + 1 >= q.r0 && g.r2 + 1 <= q.r1 + 1) { ctx.moveTo(x1, fy); ctx.lineTo(x2, fy); }
+    ctx.stroke();
+    ctx.font = '600 10px Inter, Arial, sans-serif';
+    L.rowBreaks.forEach((b, i) => {
+      if (b < q.r0 || b > q.r1 + 1) return;
+      const y = this.Y(b);
+      line(x1, y, x2, y, L.manualR.has(b));
+      const t = 'Halaman ' + (i + 2), tw = ctx.measureText(t).width + 10;
+      ctx.setLineDash([]); ctx.fillStyle = col; this.roundRect(x2 - tw - 4, y + 3, tw, 15, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillText(t, x2 - tw + 1, y + 14);
+    });
+    for (const c of L.colBreaks) {
+      if (c < q.c0 || c > q.c1 + 1) continue;
+      const x = this.X(c);
+      line(x, y1, x, y2, L.manualC.has(c));
+    }
+    // ranges kept together (manual): a bar left of the printed range
+    ctx.setLineDash([]); ctx.fillStyle = col + '55';
+    for (const k of L.p.keep) {
+      if (k.r2 < q.r0 || k.r1 > q.r1) continue;
+      const ky1 = Math.max(q.y, this.Y(k.r1)), ky2 = Math.min(q.y + q.h, this.Y(k.r2 + 1));
+      if (this.X(g.c1) >= q.x) ctx.fillRect(this.X(g.c1), ky1 + 2, 3 / this.z, ky2 - ky1 - 4);
+    }
+    ctx.restore();
+  }
+
   drawOverlays(q) {
     const ctx = this.ctx, sh = this.sh, acc = this.colors.accent;
     const clampQ = g => {
@@ -806,6 +850,7 @@ export class Grid {
     const marks = (list, col) => { for (const g of list || []) { const cq = clampQ(g); if (!cq) continue; const rc = rectOf(cq); ctx.fillStyle = col + '14'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h); strokeSides(rc, cq.sides, 1.5 / this.z, col, [4, 3]); } };
     if (app.readOnly || app.settings.showVE) marks(sh.ve, '#1e8e3e');
     if (sh.protect && !app.readOnly) marks(sh.protectExcept, '#1a73e8');
+    if (app.settings.breaks && !app.readOnly) this.drawPageBreaks(q);
     const edit = this.edit;
     // formula reference highlights
     if (edit && edit.refs && edit.sh === sh) {

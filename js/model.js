@@ -31,6 +31,8 @@ export class Sheet {
     this.tab = null; this.grid = true; this.protect = false; this.hidden = false; this.pivot = null;
     // protectExcept: cells left unlocked in a protected sheet; lock: {salt, hash} password; ve: cells viewers of a share link may edit
     this.protectExcept = []; this.lock = null; this.ve = [];
+    // page: print setup (paper, margins, scale, page breaks, keep-together ranges) — see pages.js
+    this.page = null;
     this.spillMap = new Map(); this.spillPrev = new Map(); this.spillOrigins = new Map();
     this.maxR = -1; this.maxC = -1;
     this.layoutV = 0;
@@ -127,7 +129,7 @@ export class Sheet {
       hiddenR: [...this.hiddenR], hiddenC: [...this.hiddenC], filteredR: [...this.filteredR], merges: this.merges,
       freezeR: this.freezeR, freezeC: this.freezeC, cf: this.cf, dv: this.dv, filter: this.filter, charts: this.charts,
       banding: this.banding, tab: this.tab, grid: this.grid, protect: this.protect, hidden: this.hidden, pivot: this.pivot,
-      protectExcept: this.protectExcept, lock: this.lock, ve: this.ve,
+      protectExcept: this.protectExcept, lock: this.lock, ve: this.ve, page: this.page,
     });
   }
   loadMeta(m) {
@@ -141,6 +143,7 @@ export class Sheet {
     this.banding = m.banding || []; this.tab = m.tab || null; this.grid = m.grid !== false; this.protect = !!m.protect;
     this.hidden = !!m.hidden; this.pivot = m.pivot || null;
     this.protectExcept = m.protectExcept || []; this.lock = m.lock || null; this.ve = m.ve || [];
+    this.page = m.page || null;
     this.layoutV++;
   }
   toJSON() {
@@ -298,6 +301,7 @@ export class Workbook {
     wb.id = j.id || wb.id;
     wb.name = j.name || wb.name;
     wb.share = j.share || null;   // live share link state (store.loadDoc), never part of the document itself
+    wb.lock = j.lock || null;     // file password (lock.js), stored beside the document like share
     wb.settings = { ...wb.settings, ...(j.settings || {}) };
     wb.styles = (j.styles || [{}]).map(s => Object.freeze({ ...s }));
     wb.styleMap = new Map(wb.styles.map((s, i) => [JSON.stringify(Object.fromEntries(Object.entries(s).sort())), i]));
@@ -429,6 +433,15 @@ export function insertDelete(wb, sh, axis, at, n) {
   sh.dv = sh.dv.filter(r => r.ranges.length);
   sh.protectExcept = fix(sh.protectExcept || []);
   sh.ve = fix(sh.ve || []);
+  if (sh.page) {
+    const pg = sh.page, sh1 = i => (i >= at ? (n < 0 && i < at - n ? null : i + n) : i);
+    if (axis === 'r') {
+      pg.rb = (pg.rb || []).map(sh1).filter(i => i != null && i > 0);
+      pg.keep = (pg.keep || []).map(k => shiftRange({ c1: 0, c2: 0, ...k }, axis, at, n)).filter(Boolean);
+      if (pg.tr) pg.tr = shiftRange({ c1: 0, c2: 0, ...pg.tr }, axis, at, n);
+    } else pg.cb = (pg.cb || []).map(sh1).filter(i => i != null && i > 0);
+    if (pg.area) pg.area = shiftRange(pg.area, axis, at, n);
+  }
   sh.banding = sh.banding.map(b => { const g = shiftRange(b, axis, at, n); return g ? { ...b, ...g } : null; }).filter(Boolean);
   if (sh.filter) { const g = shiftRange(sh.filter, axis, at, n); sh.filter = g ? { ...sh.filter, ...g } : null; }
   for (const ch of sh.charts) {

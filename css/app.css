@@ -713,3 +713,41 @@ body.dropping::after { content: "Lepaskan file untuk mengimpor"; position: fixed
 .rl .row { flex-wrap: wrap; }
 .rl .row .inp { width: 130px; flex: 1; }
 body.ro #doc-title { pointer-events: none; }
+
+/* ---------- Page setup & page breaks ---------- */
+.pagechip { position: fixed; z-index: 41; display: none; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; border-radius: 12px; background: var(--sheen), var(--glass-strong); box-shadow: var(--glass-shadow); font-size: 12.5px; color: var(--text); max-width: calc(100vw - 16px); }
+.pagechip.show { display: flex; animation: fade .15s ease-out; }
+.pagechip > .ms { color: var(--accent); font-size: 18px; }
+.pagechip > span:not(.ms) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pagechip .btn.sm { gap: 4px; white-space: nowrap; }
+.pagechip .btn.sm .ms { font-size: 16px; }
+.pgset { display: grid; grid-template-columns: 1fr 170px; gap: 20px; align-items: start; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.pg-prev-wrap { display: grid; justify-items: center; gap: 8px; padding-top: 24px; }
+.pg-prev { position: relative; background: #fff; border-radius: 3px; box-shadow: 0 1px 4px rgba(16, 24, 40, .25); transition: width .15s, height .15s; }
+.pg-prev i { position: absolute; border: 1px dashed var(--accent); background: repeating-linear-gradient(180deg, rgba(11, 87, 208, .10) 0 3px, transparent 3px 7px); transition: inset .15s; }
+@media (max-width: 640px) {
+  .pgset { grid-template-columns: 1fr; }
+  .pg-prev-wrap { display: none; }
+  .grid4 { grid-template-columns: 1fr 1fr; }
+  .pagechip > span:not(.ms) { display: none; }
+}
+
+/* ---------- File lock ---------- */
+body.file-locked #app, body.file-locked #linkchip, body.file-locked #pagechip { visibility: hidden; }
+.lk-screen { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; }
+.lk-card { width: min(380px, 100%); display: grid; gap: 12px; justify-items: center; text-align: center; padding: 30px 26px 22px; border-radius: 22px; background: var(--sheen), var(--glass-strong); box-shadow: var(--glass-shadow); }
+.lk-card h2 { margin: 2px 0 0; font-size: 19px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lk-card p { margin: 0; color: var(--text-2); }
+.lk-card .inp { width: 100%; text-align: center; font-size: 16px; }
+.lk-ic { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; background: var(--on); color: var(--accent); }
+.lk-ic .ms { font-size: 30px; }
+.lk-hint { display: flex; gap: 6px; align-items: center; color: var(--text-2); }
+.lk-hint .ms { font-size: 16px; }
+.lk-err { min-height: 18px; color: var(--danger); font-size: 13px; }
+.lk-btns { display: flex; gap: 8px; width: 100%; }
+.lk-btns .btn { gap: 6px; }
+.lk-btns .btn.primary { flex: 1; justify-content: center; }
+.lk-card.shake { animation: lk-shake .38s; }
+@keyframes lk-shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+#lock-badge { color: var(--accent); }

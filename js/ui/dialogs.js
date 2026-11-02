@@ -518,7 +518,7 @@ export async function openDialog(app, tab = 'recent') {
     if (!items.length) list.append(el('div.empty', icon('folder_off'), el('span', 'Belum ada spreadsheet tersimpan')));
     for (const x of items) {
       const row = el('div.doc-row' + (x.id === app.wb.id ? '.current' : ''),
-        el('span.doc-ic', icon('grid_on')),
+        el('span.doc-ic', icon(x.locked ? 'lock' : 'grid_on')),
         el('div.doc-main', el('div.doc-name', x.name), el('div.muted.small', new Date(x.updated).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) + ' · ' + x.sheets + ' sheet')),
         el('button.icon-btn', { type: 'button', 'data-tip': 'Hapus', onclick: async e => { e.stopPropagation(); if (await confirmDlg('Hapus spreadsheet', `Hapus "${x.name}" dari perangkat ini?`, 'Hapus', true)) { await store.deleteDoc(x.id); docs.splice(docs.indexOf(x), 1); draw(); if (x.id === app.wb.id) app.cmd('newDoc', 'blank'); } } }, icon('delete')));
       row.addEventListener('click', async () => { d.close(); if (x.id === app.wb.id) return; await app.save(); const j = await store.loadDoc(x.id); if (j) app.openWorkbook((await import('../model.js')).Workbook.fromJSON(j)); });

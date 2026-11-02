@@ -34,20 +34,21 @@ const reqP = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result);
 export async function saveDoc(wb) {
   const j = wb.toJSON();
   // share: live share link state of this copy ({key, role, owner, id, vkey, ekey, rev, clean}), kept beside the workbook
-  const rec = { id: wb.id, name: wb.name, updated: Date.now(), sheets: wb.sheets.length, json: j, share: wb.share || null };
+  // lock: file password ({salt, hash}) — kept beside the workbook so share links never carry it
+  const rec = { id: wb.id, name: wb.name, updated: Date.now(), sheets: wb.sheets.length, json: j, share: wb.share || null, lock: wb.lock || null };
   if (!db) { mem.docs.set(wb.id, rec); return; }
   await tx('docs', 'readwrite', s => s.put(rec));
 }
 export async function loadDoc(id) {
-  if (!db) { const rec = mem.docs.get(id); return rec ? (rec.share ? { ...rec.json, share: rec.share } : rec.json) : null; }
+  if (!db) { const rec = mem.docs.get(id); return rec ? { ...rec.json, share: rec.share || null, lock: rec.lock || null } : null; }
   const rec = await tx('docs', 'readonly', s => reqP(s.get(id)));
-  return rec ? (rec.share ? { ...rec.json, share: rec.share } : rec.json) : null;
+  return rec ? { ...rec.json, share: rec.share || null, lock: rec.lock || null } : null;
 }
 export async function listDocs() {
   let all;
   if (!db) all = [...mem.docs.values()];
   else all = await tx('docs', 'readonly', s => reqP(s.getAll()));
-  return all.map(d => ({ id: d.id, name: d.name, updated: d.updated, sheets: d.sheets, share: d.share ? d.share.role : null })).sort((a, b) => b.updated - a.updated);
+  return all.map(d => ({ id: d.id, name: d.name, updated: d.updated, sheets: d.sheets, share: d.share ? d.share.role : null, locked: !!d.lock })).sort((a, b) => b.updated - a.updated);
 }
 export async function deleteDoc(id) {
   if (!db) { mem.docs.delete(id); mem.versions = mem.versions.filter(v => v.doc !== id); return; }
