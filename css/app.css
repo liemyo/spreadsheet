@@ -162,7 +162,7 @@ kbd { font: 500 11px var(--font); background: var(--kbd); border: 1px solid var(
 
 /* wallpaper blobs give the glass something to refract */
 .wallpaper { position: fixed; inset: 0; overflow: hidden; z-index: -1; pointer-events: none; }
-.blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .55; animation: drift 28s ease-in-out infinite alternate; }
+.blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .55; animation: none; }
 .b1 { width: 520px; height: 520px; background: var(--blob1); left: -120px; top: -160px; }
 .b2 { width: 460px; height: 460px; background: var(--blob2); right: -80px; top: 60px; animation-delay: -8s; }
 .b3 { width: 560px; height: 560px; background: var(--blob3); left: 40%; bottom: -260px; animation-delay: -14s; }
@@ -384,7 +384,7 @@ h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--text-2);
   position: fixed; min-width: 230px; max-width: 360px; max-height: calc(100vh - 16px); overflow: auto; padding: 6px; border-radius: 14px;
   background: var(--sheen), var(--glass-strong); animation: pop .12s ease-out; z-index: 50;
 }
-.liquid-ok .menu, .liquid-ok .dlg { -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--sat)); backdrop-filter: url(#liquid) blur(18px) saturate(var(--sat)); }
+.liquid-ok .menu, .liquid-ok .dlg { -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--sat)); backdrop-filter: blur(18px) saturate(var(--sat)); }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.985); } }
 .menu-item {
   display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 0 10px 0 8px; border-radius: 8px; cursor: pointer; user-select: none;

@@ -69,11 +69,14 @@ export class Grid {
     const r = this.host.getBoundingClientRect();
     this.W = r.width; this.H = r.height;
     this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
-    this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
+    const w = Math.max(1, Math.round(r.width * this.dpr)), h = Math.max(1, Math.round(r.height * this.dpr));
     this.canvas.style.width = r.width + 'px';
     this.canvas.style.height = r.height + 'px';
-    this.render();
+    if (w === this.canvas.width && h === this.canvas.height) return this.render();
+    // Setting the size clears the canvas: draw again before this frame is painted, not on the next one,
+    // or the grid shows up empty (the page background, dark in dark themes) for a frame.
+    this.canvas.width = w; this.canvas.height = h;
+    if (this.app.wb) this.drawNow(); else this.render();
   }
 
   // ---------- geometry ----------
