@@ -196,6 +196,7 @@ export async function importFile(file) {
     if (!j.sheets) throw new Error('File JSON bukan spreadsheet Amatu Sheets.');
     const wb = Workbook.fromJSON(j);
     wb.id = 'wb' + Date.now().toString(36);
+    wb.share = null;
     return wb;
   }
   if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {

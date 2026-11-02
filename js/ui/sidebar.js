@@ -437,7 +437,7 @@ export class Sidebar {
           if (!(await confirmDlg('Pulihkan versi', 'Pulihkan versi ini? Versi saat ini akan disimpan terlebih dahulu ke histori.', 'Pulihkan'))) return;
           await store.saveVersion(app.wb, 'Sebelum pemulihan');
           const j = await store.getVersion(v.vid);
-          const wb = Workbook.fromJSON(j); wb.id = app.wb.id;
+          const wb = Workbook.fromJSON(j); wb.id = app.wb.id; if (app.wb.share) wb.share = { ...app.wb.share, clean: false };
           app.openWorkbook(wb); toast('Versi dipulihkan');
         } }, 'Pulihkan'),
         el('button.icon-btn.sm', { type: 'button', 'data-tip': 'Buat salinan', onclick: async () => { const j = await store.getVersion(v.vid); const wb = Workbook.fromJSON(j); wb.id = uid('wb'); wb.name = 'Salinan dari ' + (v.label || app.wb.name); app.openWorkbook(wb); } }, icon('file_copy'))));

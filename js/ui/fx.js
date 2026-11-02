@@ -95,7 +95,7 @@ export class FormulaBar {
       this.input.value = t;
       this.paint(t);
     }
-    this.input.readOnly = !app.canEdit(g.sel.r, g.sel.c);
+    this.input.readOnly = !app.canEdit(g.sel.r, g.sel.c, true);
   }
 
   mirror(text) { if (!this.focused) { this.input.value = text; } this.paint(text); }

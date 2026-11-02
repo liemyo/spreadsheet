@@ -801,6 +801,11 @@ export class Grid {
       if (sides.r) { ctx.moveTo(x2, y1); ctx.lineTo(x2, y2); }
       ctx.stroke(); ctx.setLineDash([]);
     };
+    // permissions: cells viewers of a share link may edit (green), unlocked cells of a locked sheet (blue)
+    const app = this.app;
+    const marks = (list, col) => { for (const g of list || []) { const cq = clampQ(g); if (!cq) continue; const rc = rectOf(cq); ctx.fillStyle = col + '14'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h); strokeSides(rc, cq.sides, 1.5 / this.z, col, [4, 3]); } };
+    if (app.readOnly || app.settings.showVE) marks(sh.ve, '#1e8e3e');
+    if (sh.protect && !app.readOnly) marks(sh.protectExcept, '#1a73e8');
     const edit = this.edit;
     // formula reference highlights
     if (edit && edit.refs && edit.sh === sh) {

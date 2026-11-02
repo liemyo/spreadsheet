@@ -577,26 +577,8 @@ export async function deleteDocDialog(app) {
   toast('Spreadsheet dihapus');
 }
 
-export async function shareDialog(app) {
-  const json = app.wb.toJSON();
-  const link = el('input.inp.mono', { readOnly: true, value: 'Membuat tautan…' });
-  const info = el('p.muted.small');
-  let url = '';
-  store.encodeShare(json).then(code => {
-    url = location.origin + location.pathname + '#s=' + code;
-    link.value = url;
-    info.textContent = url.length > 60000 ? 'Spreadsheet ini cukup besar; sebagian aplikasi chat mungkin memotong tautan. Gunakan Download .xlsx untuk berbagi file.' : `Tautan berisi salinan lengkap spreadsheet (${Math.round(code.length / 1024)} KB, terkompresi). Penerima membuka salinannya sendiri.`;
-  });
-  dialog({
-    title: `Bagikan "${app.wb.name}"`, width: 520,
-    body: el('div.stack',
-      el('div.share-note', icon('lock'), el('div', el('b', 'Disimpan secara privat di perangkat ini'), el('div.muted.small', 'Amatu Sheets tidak mengunggah data Anda ke server. Bagikan sebagai tautan salinan atau sebagai file.'))),
-      field('Tautan salinan', el('div.row', link, el('button.btn', { type: 'button', onclick: () => { link.select(); navigator.clipboard?.writeText(url); toast('Tautan disalin'); } }, icon('content_copy'), 'Salin'))),
-      info,
-      el('div.row', el('button.btn', { type: 'button', onclick: () => io.exportXLSX(app) }, icon('download'), 'Download .xlsx'), el('button.btn', { type: 'button', onclick: () => io.exportCSV(app, ',') }, icon('download'), 'Download .csv'))),
-    buttons: [{ label: 'Selesai', primary: true }],
-  });
-}
+// Bagikan: live share links, see ../sharing.js
+export { shareDialog } from '../sharing.js';
 
 export function settingsDialog(app) {
   const wb = app.wb;

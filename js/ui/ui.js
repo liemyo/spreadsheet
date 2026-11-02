@@ -130,7 +130,7 @@ export function dialog({ title, body, buttons = [], width = 460, onClose, cls = 
   back.addEventListener('pointerdown', e => { if (e.target === back && !noBackdropClose) close(); });
   const key = e => {
     if (e.key === 'Escape') { e.stopPropagation(); close(); }
-    if (e.key === 'Enter' && !e.shiftKey && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT') {
+    if (e.key === 'Enter' && !e.shiftKey && !e.target.dataset?.enter && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT') {
       const p = buttons.find(b => b.primary);
       if (p) { e.preventDefault(); e.stopPropagation(); foot.querySelector('.primary')?.click(); }
     }

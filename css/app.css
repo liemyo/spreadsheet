@@ -689,3 +689,27 @@ body.dropping::after { content: "Lepaskan file untuk mengimpor"; position: fixed
   .findbar .inp { width: auto; flex: 1; }
 }
 @media print { .wallpaper { display: none; } }
+
+/* ---------- sharing & permissions ---------- */
+.share-badge { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 12px; border: 0; cursor: pointer; font: 500 12px/1 inherit; white-space: nowrap; background: var(--hover); color: var(--text-2); }
+.share-badge .ms { font-size: 15px; }
+.share-badge.view { background: rgba(30, 142, 62, .14); color: #1e8e3e; }
+.share-badge.edit, .share-badge.own { background: rgba(26, 115, 232, .14); color: var(--accent); }
+.share-badge.bad { background: rgba(217, 48, 37, .14); color: var(--danger); }
+.share-dlg .share-row { display: grid; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--line, rgba(128,128,128,.25)); }
+.share-dlg .share-row.off { opacity: .65; }
+.share-dlg .share-row .row .inp { flex: 1; min-width: 0; }
+.share-dlg .share-head { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+.share-dlg .share-note .btn.sm { margin-top: 8px; }
+.switch { position: relative; display: inline-block; width: 38px; height: 22px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch span { position: absolute; inset: 0; border-radius: 11px; background: rgba(128, 128, 128, .4); transition: background .2s; cursor: pointer; }
+.switch span::after { content: ''; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(16px); }
+.rl-rows { display: grid; gap: 4px; max-height: 180px; overflow: auto; }
+.rl-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; background: var(--hover); }
+.rl-row .mono { flex: 1; }
+.rl .row { flex-wrap: wrap; }
+.rl .row .inp { width: 130px; flex: 1; }
+body.ro #doc-title { pointer-events: none; }

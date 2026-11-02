@@ -7,6 +7,7 @@ import { TEMPLATES } from '../templates.js';
 import * as D from './dialogs.js';
 import * as io from '../io.js';
 import { THEME_FONTS } from './toolbar.js';
+import * as SH from '../sharing.js';
 
 const M = () => window.amatu?.MOD || 'Ctrl';
 
@@ -101,7 +102,7 @@ export function menus(app) {
       { label: 'Impor', icon: 'upload_file', run: () => D.importDialog(app) },
       { label: 'Buat salinan', icon: 'file_copy', run: () => app.cmd('makeCopy') },
       { sep: true },
-      { label: 'Bagikan', icon: 'person_add', run: () => D.shareDialog(app) },
+      { label: 'Bagikan', icon: 'person_add', run: () => SH.shareDialog(app) },
       { label: 'Download', icon: 'download', sub: [
         { label: 'Microsoft Excel (.xlsx)', run: () => io.exportXLSX(app) },
         { label: 'OpenDocument (.ods)', run: () => io.exportXLSX(app, 'ods') },
@@ -147,6 +148,7 @@ export function menus(app) {
       { label: 'Tampilkan', icon: 'visibility', sub: [
         { label: 'Garis kisi', checked: () => app.sheet.grid, run: () => app.cmd('toggleGridlines') },
         { label: 'Rumus', kbd: `${M()}+\``, checked: () => app.showFormulas, run: () => app.cmd('toggleFormulas') },
+        { label: 'Sel yang bisa diedit pelihat', checked: () => !!app.settings.showVE, run: () => app.cmd('toggleShowVE') },
         { label: 'Bilah formula', checked: () => !document.body.classList.contains('no-fx'), run: () => { document.body.classList.toggle('no-fx'); app.grid.resize(); } },
         { label: 'Bilah alat', checked: () => !document.body.classList.contains('no-toolbar'), run: () => { document.body.classList.toggle('no-toolbar'); app.grid.resize(); } },
       ] },
@@ -247,7 +249,7 @@ export function menus(app) {
       { label: 'Validasi data', icon: 'rule', run: () => app.sidebar.open('dv') },
       { label: 'Statistik kolom', icon: 'query_stats', run: () => D.columnStatsDialog(app) },
       { label: 'Rentang bernama', icon: 'label', run: () => app.sidebar.open('names') },
-      { label: 'Lindungi sheet', icon: 'lock', checked: () => app.sheet.protect, run: () => app.cmd('protectSheet') },
+      { label: 'Proteksi & izin', icon: 'lock', sub: () => protectItems(app) },
       { sep: true },
       { label: 'Pembersihan data', icon: 'cleaning_services', sub: [
         { label: 'Hapus duplikat…', run: () => D.removeDuplicatesDialog(app) },
@@ -322,6 +324,29 @@ export function buildMenubar(app, host) {
   search.addEventListener('keydown', e => { if (e.key === 'Escape') { search.value = ''; closeMenus(); app.grid.focus(); } });
   document.addEventListener('keydown', e => { if (e.altKey && (e.key === '/' || e.code === 'Slash')) { e.preventDefault(); search.focus(); } });
   host.append(el('span.flex1'), search);
+}
+
+// Data › Proteksi & izin: password lock of the sheet (with cells left open) and viewer-editable cells of share links.
+export function protectItems(app) {
+  const sh = app.sheet;
+  return [
+    { head: `Sheet "${sh.name}"` },
+    { label: 'Kunci sheet dengan kata sandi…', icon: 'lock', hidden: () => sh.protect, run: () => SH.lockDialog(app, sh) },
+    { label: 'Buka kunci sheet…', icon: 'lock_open', hidden: () => !sh.protect, run: () => SH.unlockDialog(app, sh) },
+    { label: 'Sel yang tetap terbuka saat dikunci…', icon: 'lock_open_right', disabled: () => !sh.protect, run: () => SH.lockedCellsDialog(app, sh) },
+    { sep: true },
+    { head: 'Tautan "Lihat saja"' },
+    { label: 'Sel yang bisa diedit pelihat…', icon: 'edit_note', run: () => SH.viewerCellsDialog(app, sh) },
+    { label: 'Izinkan pelihat mengedit pilihan ini', icon: 'add_task', disabled: () => app.readOnly, run: () => {
+      const add = app.grid.sel.ranges.map(g => ({ r1: g.r1, c1: g.c1, r2: g.r2, c2: g.c2 }));
+      app.tx('Izin pelihat', () => { app.wb.hist.touchMeta(sh); sh.ve = [...(sh.ve || []), ...add.filter(g => !(sh.ve || []).some(x => x.r1 === g.r1 && x.c1 === g.c1 && x.r2 === g.r2 && x.c2 === g.c2))]; });
+      if (!app.settings.showVE) app.cmd('toggleShowVE');
+      toast(`Pelihat dapat mengedit ${add.map(g => rangeAddr(g)).join(', ')}`);
+    } },
+    { label: 'Tandai sel yang bisa diedit pelihat', icon: 'border_style', checked: () => !!app.settings.showVE, run: () => app.cmd('toggleShowVE') },
+    { sep: true },
+    { label: 'Bagikan…', icon: 'person_add', run: () => SH.shareDialog(app) },
+  ];
 }
 
 export function cellContextMenu(app) {
@@ -426,7 +451,8 @@ export function tabContextMenu(app, sh) {
     { label: 'Duplikat', icon: 'content_copy', run: () => app.cmd('duplicateSheet') },
     { label: 'Ganti nama', icon: 'drive_file_rename_outline', run: () => { const tab = document.querySelectorAll('#tabs .tab')[app.wb.sheets.filter((s, j) => !s.hidden && j <= i).length - 1]; if (tab) app.renameSheetInline(tab, sh); } },
     { label: 'Ubah warna', icon: 'palette', sub: [{ node: close => colorGrid(c => { close(); app.cmd('tabColor', sh, c); }, { resetLabel: 'Setel ulang' }) }] },
-    { label: sh.protect ? 'Buka perlindungan sheet' : 'Lindungi sheet', icon: sh.protect ? 'lock_open' : 'lock', run: () => app.cmd('protectSheet', sh) },
+    { label: sh.protect ? 'Buka kunci sheet…' : 'Kunci sheet dengan kata sandi…', icon: sh.protect ? 'lock_open' : 'lock', run: () => app.cmd('protectSheet', sh) },
+    { label: 'Sel yang bisa diedit pelihat…', icon: 'edit_note', run: () => SH.viewerCellsDialog(app, sh) },
     { label: 'Sembunyikan sheet', icon: 'visibility_off', run: () => app.cmd('hideSheet', sh) },
     { sep: true },
     { label: 'Pindahkan ke kanan', icon: 'arrow_forward', disabled: () => i >= app.wb.sheets.length - 1, run: () => app.cmd('moveSheet', i, i + 1) },

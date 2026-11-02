@@ -29,6 +29,8 @@ export class Sheet {
     this.freezeR = 0; this.freezeC = 0;
     this.cf = []; this.dv = []; this.filter = null; this.charts = []; this.banding = [];
     this.tab = null; this.grid = true; this.protect = false; this.hidden = false; this.pivot = null;
+    // protectExcept: cells left unlocked in a protected sheet; lock: {salt, hash} password; ve: cells viewers of a share link may edit
+    this.protectExcept = []; this.lock = null; this.ve = [];
     this.spillMap = new Map(); this.spillPrev = new Map(); this.spillOrigins = new Map();
     this.maxR = -1; this.maxC = -1;
     this.layoutV = 0;
@@ -125,6 +127,7 @@ export class Sheet {
       hiddenR: [...this.hiddenR], hiddenC: [...this.hiddenC], filteredR: [...this.filteredR], merges: this.merges,
       freezeR: this.freezeR, freezeC: this.freezeC, cf: this.cf, dv: this.dv, filter: this.filter, charts: this.charts,
       banding: this.banding, tab: this.tab, grid: this.grid, protect: this.protect, hidden: this.hidden, pivot: this.pivot,
+      protectExcept: this.protectExcept, lock: this.lock, ve: this.ve,
     });
   }
   loadMeta(m) {
@@ -137,6 +140,7 @@ export class Sheet {
     this.cf = m.cf || []; this.dv = m.dv || []; this.filter = m.filter || null; this.charts = m.charts || [];
     this.banding = m.banding || []; this.tab = m.tab || null; this.grid = m.grid !== false; this.protect = !!m.protect;
     this.hidden = !!m.hidden; this.pivot = m.pivot || null;
+    this.protectExcept = m.protectExcept || []; this.lock = m.lock || null; this.ve = m.ve || [];
     this.layoutV++;
   }
   toJSON() {
@@ -168,6 +172,7 @@ export class History {
     this.cur = null;
     if (!e.cells.size && !e.meta.size && !e.full.size && !e.wb) return;
     e.selAfter = selAfter;
+    this.wb.dirty = true;   // meta-only changes (tab colour, freeze, protection…) must be saved too
     this.undoS.push(e);
     if (this.undoS.length > 300) this.undoS.shift();
     this.redoS = [];
@@ -175,6 +180,9 @@ export class History {
   get active() { return !!this.cur && !this.paused; }
   touchCell(sh, k) {
     if (!this.active) return;
+    // a full snapshot of this sheet already holds the state before the transaction (insert/delete rows then
+    // rewriting formulas would otherwise restore moved cells over it on undo)
+    if (this.cur.full.has(sh.id)) return;
     let m = this.cur.cells.get(sh.id);
     if (!m) { m = new Map(); this.cur.cells.set(sh.id, m); }
     if (!m.has(k)) m.set(k, snapCell(sh.cells.get(k)));
@@ -289,6 +297,7 @@ export class Workbook {
     const wb = new Workbook();
     wb.id = j.id || wb.id;
     wb.name = j.name || wb.name;
+    wb.share = j.share || null;   // live share link state (store.loadDoc), never part of the document itself
     wb.settings = { ...wb.settings, ...(j.settings || {}) };
     wb.styles = (j.styles || [{}]).map(s => Object.freeze({ ...s }));
     wb.styleMap = new Map(wb.styles.map((s, i) => [JSON.stringify(Object.fromEntries(Object.entries(s).sort())), i]));
@@ -418,6 +427,8 @@ export function insertDelete(wb, sh, axis, at, n) {
   sh.cf = sh.cf.filter(r => r.ranges.length);
   for (const rule of sh.dv) rule.ranges = fix(rule.ranges);
   sh.dv = sh.dv.filter(r => r.ranges.length);
+  sh.protectExcept = fix(sh.protectExcept || []);
+  sh.ve = fix(sh.ve || []);
   sh.banding = sh.banding.map(b => { const g = shiftRange(b, axis, at, n); return g ? { ...b, ...g } : null; }).filter(Boolean);
   if (sh.filter) { const g = shiftRange(sh.filter, axis, at, n); sh.filter = g ? { ...sh.filter, ...g } : null; }
   for (const ch of sh.charts) {

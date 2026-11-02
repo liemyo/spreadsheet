@@ -16,6 +16,8 @@ import { Charts } from './charts.js';
 import * as store from './store.js';
 import * as io from './io.js';
 import { TEMPLATES } from './templates.js';
+import * as SH from './sharing.js';
+import { shareKey, errText } from './live.js';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 export const MOD = isMac ? '⌘' : 'Ctrl';
@@ -72,7 +74,16 @@ export class App {
     await store.ready();
     const params = new URLSearchParams(location.search);
     let wb = null;
-    if (location.hash.startsWith('#s=')) {
+    const sk = shareKey();
+    if (sk) {   // opened through a share link: the server copy, cached on this device under its own id
+      const cid = 'sh_' + sk.slice(0, 16).replace(/[^\w-]/g, '_');
+      const j = await store.loadDoc(cid);
+      wb = j ? Workbook.fromJSON(j) : newWorkbook();
+      if (!j) wb.name = 'Memuat…';
+      wb.id = cid;
+      wb.share = j?.share?.key === sk ? j.share : { key: sk, role: 'view', owner: false, rev: 0, clean: true };
+    }
+    if (!wb && location.hash.startsWith('#s=')) {
       try { wb = Workbook.fromJSON(await store.decodeShare(location.hash.slice(3))); wb.id = uid('wb'); wb.name += ' (salinan)'; history.replaceState(null, '', location.pathname); toast('Spreadsheet dibuka dari tautan bagikan'); } catch (e) { console.error(e); toast('Tautan bagikan tidak valid'); }
     }
     if (!wb) {
@@ -87,6 +98,7 @@ export class App {
 
   // ---------- workbook lifecycle ----------
   openWorkbook(wb, initial = false) {
+    this.live?.stop(); this.live = null;
     this.wb = wb;
     this.docId = wb.id;
     setLocale(wb.settings.locale || 'id-ID');
@@ -102,28 +114,97 @@ export class App {
     this.after({ save: !initial });
     this.renderTabs();
     this.charts.reset();
-    store.setLastDoc(wb.id);
-    history.replaceState(null, '', location.pathname + '?id=' + encodeURIComponent(wb.id));
+    const guest = wb.share && !wb.share.owner;
+    if (!guest) store.setLastDoc(wb.id);
+    history.replaceState(null, '', location.pathname + (guest ? '?share=' + encodeURIComponent(wb.share.key) : '?id=' + encodeURIComponent(wb.id)));
     if (!initial) this.save();
+    SH.startLive(this);
     this.grid.focus();
   }
+
+  // ---------- share links ----------
+  // A newer server copy (merged with local edits): replace the workbook, keep sheet, selection, scroll and undo.
+  applyRemote(doc) {
+    const cur = this.wb;
+    if (!cur || !doc || !doc.sheets) return;
+    const nw = Workbook.fromJSON({ ...doc, id: cur.id });
+    nw.share = cur.share; nw.hist = cur.hist; nw.hist.wb = nw;
+    const aid = cur.sheets[cur.active]?.id, i = nw.sheets.findIndex(x => x.id === aid);
+    nw.active = i >= 0 ? i : Math.min(cur.active, nw.sheets.length - 1);
+    const sel = this.grid.sel, sx = this.grid.scroller.scrollLeft, sy = this.grid.scroller.scrollTop;
+    this.wb = nw;
+    setLocale(nw.settings.locale || 'id-ID');
+    if (document.activeElement !== this.titleInput) this.titleInput.value = nw.name;
+    document.title = nw.name + ' – Amatu Sheets';
+    this.grid.g = null;
+    nw.eng.recalc();
+    for (const sh of nw.sheets) { this.cf.reset(); this.withSheet(sh, () => { nw.hist.paused++; ops.filterRows(this); nw.hist.paused--; }); }
+    nw.dirty = true;
+    const sh = this.sheet;
+    if (sel.r < sh.rows && sel.c < sh.cols) this.grid.sel = sel;
+    this.after({ remote: true });
+    this.charts.reset();
+    this.grid.scroller.scrollLeft = sx; this.grid.scroller.scrollTop = sy;
+  }
+  setRole(s) {
+    this.share = s;
+    this.readOnly = !!(s && !s.owner && (s.role === 'view' || s.revoked));
+    document.body.classList.toggle('ro', this.readOnly);
+    document.body.classList.toggle('shared', !!s);
+    this.titleInput.readOnly = this.readOnly;
+    let b = document.getElementById('share-badge');
+    if (!s) { b?.remove(); }
+    else {
+      if (!b) { b = el('button.share-badge#share-badge', { type: 'button', onclick: () => SH.shareDialog(this) }); this.saveState.after(b); }
+      const ve = this.wb.sheets.some(x => (x.ve || []).length);
+      const [ic, tx, tip] = s.revoked ? ['link_off', 'Tautan tidak berlaku', 'Pemilik mematikan atau mengganti tautan ini'] : s.owner ? ['group', 'Dibagikan', 'Spreadsheet ini dibagikan dengan tautan'] : s.role === 'edit' ? ['edit', 'Bisa mengedit', 'Anda membuka tautan edit'] : ['visibility', ve ? 'Hanya melihat · isi sel hijau' : 'Hanya melihat', ve ? 'Anda hanya dapat mengisi sel yang ditandai hijau' : 'Anda membuka tautan lihat saja'];
+      b.className = 'share-badge ' + (s.revoked ? 'bad' : s.owner ? 'own' : s.role);
+      b.replaceChildren(icon(ic), el('span', tx));
+      b.dataset.tip = tip;
+    }
+    if (this.wb) { this.grid.render(); this.fx?.sync(); this.toolbar?.sync(); }
+  }
+  shareStatus(st, info, e) {
+    if (st === 'revoked') {
+      if (this.wb.share && !this.wb.share.owner) {   // the owner withdrew the link: drop the copy cached on this device
+        this.wb.share.revoked = true;
+        store.deleteDoc(this.wb.id).catch(() => { });
+        const blank = newWorkbook(); blank.id = this.wb.id; blank.share = this.wb.share; blank.name = 'Tautan tidak berlaku';
+        this.live = null; this.wb = blank; this.wb.dirty = false; this.titleInput.value = blank.name;
+        this.grid.g = null; this.renderTabs(); this.grid.render();
+        this.setRole(this.wb.share);
+      }
+      toast(errText({ code: 'notfound' }));
+      this.setSaveState('error', ['link_off', 'Tautan tidak berlaku']);
+      return;
+    }
+    if (st === 'denied' || st === 'error') toast(errText(e || { code: 'denied' }));
+    const t = {
+      synced: ['cloud_done', 'Tersinkron', 'Tersimpan di server berbagi' + (info?.by ? ' · terakhir diubah oleh ' + info.by : '')],
+      saving: ['sync', 'Menyinkronkan…'], pending: ['sync', 'Menyinkronkan…'],
+      offline: ['cloud_off', 'Offline', 'Tidak terhubung. Perubahan disimpan di perangkat dan dikirim saat online.'],
+      denied: ['block', 'Ditolak'], error: ['error', 'Gagal sinkron'],
+    }[st];
+    if (t) this.setSaveState(st === 'synced' ? 'saved' : st === 'offline' || st === 'error' || st === 'denied' ? 'error' : 'saving', t);
+  }
+  permit(label, fn) { this._permit = true; try { return this.tx(label, fn); } finally { this._permit = false; } }
   withSheet(sh, fn) { const prev = this.wb.active; this.wb.active = this.wb.sheets.indexOf(sh); try { return fn(); } finally { this.wb.active = prev; } }
 
   async save() {
-    if (!this.wb) return;
-    this.setSaveState('saving');
+    if (!this.wb || this.wb.share?.revoked) return;
+    if (!this.live) this.setSaveState('saving');
     try {
       await store.saveDoc(this.wb);
       this.wb.dirty = false;
-      this.setSaveState('saved');
+      if (!this.live) this.setSaveState('saved');
       store.maybeVersion(this.wb);
     } catch (e) { console.error(e); this.setSaveState('error'); }
   }
-  setSaveState(s) {
-    const t = { saving: ['sync', 'Menyimpan…'], saved: ['cloud_done', 'Semua perubahan disimpan di perangkat'], error: ['error', 'Gagal menyimpan'] }[s];
+  setSaveState(s, custom) {
+    const t = custom || { saving: ['sync', 'Menyimpan…'], saved: ['cloud_done', 'Semua perubahan disimpan di perangkat'], error: ['error', 'Gagal menyimpan'] }[s];
     this.saveState.innerHTML = '';
-    this.saveState.append(icon(t[0]), el('span', s === 'saved' ? 'Tersimpan' : t[1]));
-    this.saveState.dataset.tip = t[1];
+    this.saveState.append(icon(t[0]), el('span', custom ? t[1] : s === 'saved' ? 'Tersimpan' : t[1]));
+    this.saveState.dataset.tip = t[2] || t[1];
     this.saveState.className = 'save-state ' + s;
   }
 
@@ -134,13 +215,25 @@ export class App {
 
   // ---------- transactions ----------
   tx(label, fn, opts = {}) {
-    const hist = this.wb.hist;
+    const hist = this.wb.hist, last = hist.undoS[hist.undoS.length - 1];
     hist.begin(label, this.selSnapshot());
     let res;
     try { res = fn(); }
     finally { hist.end(this.selSnapshot()); }
+    // locked sheets / view-only share links: undo whatever the transaction changed outside what is allowed
+    const e = hist.depth === 0 ? hist.undoS[hist.undoS.length - 1] : null;
+    if (e && e !== last) {
+      const why = SH.checkEntry(this, e);
+      if (why) { hist.undo(); hist.redoS.pop(); this.after({ save: false }); toast(why); return undefined; }
+      if (this.readOnly) this.sendCells(SH.viewerCells(this, e));
+    }
     this.after(opts);
     return res;
+  }
+  // Viewer edits of allowed cells go to the server one cell at a time; a refusal restores the server copy.
+  sendCells(cells) {
+    if (!cells.length || !this.live) return;
+    this.live.cells(cells).catch(() => { if (this.live?.base) this.applyRemote(this.live.base); });
   }
   selSnapshot() { return { sheet: this.sheet.id, sel: JSON.parse(JSON.stringify(this.grid.sel)) }; }
   restoreSel(s) {
@@ -165,11 +258,11 @@ export class App {
     this.renderTabs();
     this.charts.update();
     this.sidebar.refresh?.();
-    if (opts.save !== false && wb.dirty) this.saveLater();
+    if (opts.save !== false && wb.dirty) { this.saveLater(); if (!opts.remote) this.live?.changed(); }
   }
 
-  undo() { if (this.grid.edit) this.grid.cancelEdit(); const e = this.wb.hist.undo(); if (!e) return; this.after(); this.restoreSel(e.sel); this.grid.changed(); this.charts.reset(); }
-  redo() { if (this.grid.edit) this.grid.cancelEdit(); const e = this.wb.hist.redo(); if (!e) return; this.after(); this.restoreSel(e.selAfter); this.grid.changed(); this.charts.reset(); }
+  undo() { if (this.grid.edit) this.grid.cancelEdit(); const e = this.wb.hist.undo(); if (!e) return; if (this.readOnly) this.sendCells(SH.viewerCells(this, e, true)); this.after(); this.restoreSel(e.sel); this.grid.changed(); this.charts.reset(); }
+  redo() { if (this.grid.edit) this.grid.cancelEdit(); const e = this.wb.hist.redo(); if (!e) return; if (this.readOnly) this.sendCells(SH.viewerCells(this, e, true)); this.after(); this.restoreSel(e.selAfter); this.grid.changed(); this.charts.reset(); }
 
   // ---------- editing ----------
   editTextOf(sh, r, c) {
@@ -180,11 +273,8 @@ export class App {
     return editText(cell.v, st.fmt);
   }
   canEdit(r, c, quiet = false) {
-    const sh = this.sheet;
-    if (sh.protect && !(sh.protectExcept || []).some(g => inRange(g, r, c))) {
-      if (!quiet) toast('Sheet ini dilindungi. Buka perlindungan di Data › Lindungi sheet.');
-      return false;
-    }
+    const why = SH.cellBlock(this, this.sheet, r, c);
+    if (why) { if (!quiet) toast(why); return false; }
     return true;
   }
   commitCell(sh, r, c, text, orig, opts = {}) {
@@ -775,7 +865,7 @@ export class App {
     document.getElementById('zoom-out').addEventListener('click', () => this.setZoom(this.grid.z - 0.1));
     document.getElementById('zoom-in').addEventListener('click', () => this.setZoom(this.grid.z + 0.1));
     document.getElementById('zoom-val').addEventListener('click', e => openMenu([50, 75, 90, 100, 125, 150, 200].map(z => ({ label: z + '%', checked: () => Math.round(this.grid.z * 100) === z, run: () => this.setZoom(z / 100) })), e.currentTarget.getBoundingClientRect()));
-    document.getElementById('btn-share').addEventListener('click', () => D.shareDialog(this));
+    document.getElementById('btn-share').addEventListener('click', () => SH.shareDialog(this));
     document.getElementById('btn-theme').addEventListener('click', e => openMenu(this.themeMenu(), e.currentTarget.getBoundingClientRect(), { alignRight: true }));
     document.getElementById('app-logo').addEventListener('click', () => D.openDialog(this));
     document.getElementById('btn-history').addEventListener('click', () => this.sidebar.open('versions'));
@@ -961,7 +1051,8 @@ export const COMMANDS = {
     app.wb.active = -1; app.switchSheet(i);
   },
   unhideSheet: (app, sh) => app.tx('Tampilkan sheet', () => { app.wb.hist.touchMeta(sh); sh.hidden = false; }),
-  protectSheet: (app, sh = app.sheet, on = !sh.protect) => app.tx('Lindungi sheet', () => { app.wb.hist.touchMeta(sh); sh.protect = on; }),
+  protectSheet: (app, sh = app.sheet) => (sh.protect ? SH.unlockDialog(app, sh) : SH.lockDialog(app, sh)),
+  toggleShowVE: app => { app.settings.showVE = !app.settings.showVE; app.saveSettings(); app.grid.render(); },
   toggleGridlines: app => app.tx('Garis kisi', () => { app.wb.hist.touchMeta(app.sheet); app.sheet.grid = !app.sheet.grid; }),
   toggleFormulas: app => { app.showFormulas = !app.showFormulas; app.grid.render(); app.toolbar.sync(); },
   toggleCheckbox: app => {
