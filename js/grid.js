@@ -903,8 +903,13 @@ export class Grid {
         if (g.r2 >= q.r0 && g.r2 <= q.r1 && g.c2 >= q.c0 && g.c2 <= q.c1) {
           const rc = rectOf(g);
           const hx = rc.x + rc.w, hy = rc.y + rc.h;
-          ctx.fillStyle = '#fff'; ctx.fillRect(hx - 4.5, hy - 4.5, 9, 9);
-          ctx.fillStyle = acc; ctx.fillRect(hx - 3.5, hy - 3.5, 7, 7);
+          if (this.touchUI) {
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hx, hy, 9 / this.z, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = acc; ctx.beginPath(); ctx.arc(hx, hy, 7 / this.z, 0, Math.PI * 2); ctx.fill();
+          } else {
+            ctx.fillStyle = '#fff'; ctx.fillRect(hx - 4.5, hy - 4.5, 9, 9);
+            ctx.fillStyle = acc; ctx.fillRect(hx - 3.5, hy - 3.5, 7, 7);
+          }
         }
       }
       // spill range outline
@@ -1007,9 +1012,10 @@ export class Grid {
   // ---------- hit testing ----------
   pos(e) {
     const r = this.host.getBoundingClientRect();
-    return { x: (e.clientX - r.left) / this.z, y: (e.clientY - r.top) / this.z };
+    const k = (this.host.offsetWidth && r.width / this.host.offsetWidth) || 1; // CSS zoom on <html> (portal fit)
+    return { x: (e.clientX - r.left) / k / this.z, y: (e.clientY - r.top) / k / this.z };
   }
-  hit(x, y) {
+  hit(x, y, touch = false) {
     const g = this.geo(), sh = this.sh;
     const fw = this.fw(), fh = this.fh();
     if (x < g.hw && Math.abs(y - (HH + fh)) <= 3 && (sh.freezeR || y <= HH + 2)) return { area: 'freezeR' };
@@ -1034,7 +1040,8 @@ export class Grid {
     // fill handle
     if (this.sel.ranges.length === 1 && !this.edit) {
       const rc = this.rangeRect(this.range);
-      if (Math.abs(x - (rc.x + rc.w)) <= 5 && Math.abs(y - (rc.y + rc.h)) <= 5) return { ...out, area: 'fill' };
+      const tol = touch ? 20 / this.z : 5;
+      if (Math.abs(x - (rc.x + rc.w)) <= tol && Math.abs(y - (rc.y + rc.h)) <= tol) return { ...out, area: 'fill' };
       const onBorder = (Math.abs(x - rc.x) <= 2 || Math.abs(x - (rc.x + rc.w)) <= 2) && y >= rc.y && y <= rc.y + rc.h ||
         (Math.abs(y - rc.y) <= 2 || Math.abs(y - (rc.y + rc.h)) <= 2) && x >= rc.x && x <= rc.x + rc.w;
       if (onBorder) return { ...out, area: 'border' };
@@ -1064,6 +1071,13 @@ export class Grid {
     sc.addEventListener('dblclick', e => this.onDbl(e));
     sc.addEventListener('contextmenu', e => this.onContext(e));
     sc.addEventListener('pointerleave', () => this.hideTip());
+    // touch-action allows panning, so a finger on the selection handle must cancel the pan itself
+    sc.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1 || this.edit) return;
+      const { x, y } = this.pos(e.touches[0]);
+      if (this.hit(x, y, true).area === 'fill') e.preventDefault();
+    }, { passive: false });
+    sc.addEventListener('touchmove', e => { if (this.drag?.touch) e.preventDefault(); }, { passive: false });
     sc.addEventListener('wheel', e => {
       if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.app.setZoom(this.z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); }
     }, { passive: false });
@@ -1081,8 +1095,10 @@ export class Grid {
 
   onDown(e) {
     if (e.button === 2) return;
+    const touch = e.pointerType === 'touch';
+    if (touch !== !!this.touchUI) { this.touchUI = touch; this.render(); }
     const { x, y } = this.pos(e);
-    const h = this.hit(x, y);
+    const h = this.hit(x, y, touch);
     this.app.closePopups?.();
     const edit = this.edit;
     // formula point-and-click
@@ -1115,7 +1131,11 @@ export class Grid {
         else this.selectRange({ r1: h.r, c1: 0, r2: h.r, c2: sh.cols - 1 }, h.r, Math.max(this.colAt(this.geo().hw + this.fw() + 1), 0), { add: e.ctrlKey || e.metaKey, er: h.r, ec: sh.cols - 1 });
         this.drag = { mode: 'rowsel', r0: e.shiftKey ? this.sel.r : h.r };
         break;
-      case 'fill': this.drag = { mode: 'fill', src: { ...this.range } }; break;
+      case 'fill':
+        // phone/tablet: the handle resizes the selection (like Sheets/Excel mobile); mouse: autofill
+        if (touch) { const g = this.range; this.drag = { mode: 'tsel', touch: true, ar: g.r1, ac: g.c1 }; }
+        else this.drag = { mode: 'fill', src: { ...this.range } };
+        break;
       case 'border': this.drag = { mode: 'move', src: { ...this.range }, r0: h.r, c0: h.c, copy: e.ctrlKey || e.altKey || e.metaKey }; break;
       case 'filterbtn': this.app.openFilterMenu(h.c); return;
       case 'checkbox': this.select(h.r, h.c); this.app.cmd('toggleCheckbox'); return;
@@ -1130,7 +1150,8 @@ export class Grid {
           const link = cell && (cell.link || cell.hl || (typeof cell.v === 'string' && URL_RE.test(cell.v) ? cell.v : null));
           if (link && (e.ctrlKey || e.metaKey)) { this.app.openLink(link); return; }
         }
-        this.drag = { mode: 'sel' };
+        // a finger dragging across cells scrolls the sheet; ranges are picked with the handle
+        this.drag = touch ? null : { mode: 'sel' };
       }
     }
     this.scroller.setPointerCapture(e.pointerId);
@@ -1145,6 +1166,14 @@ export class Grid {
     const sh = this.sh;
     switch (d.mode) {
       case 'sel': { const r = this.rowAt(y), c = this.colAt(x); if (r !== this.sel.er || c !== this.sel.ec) this.extendTo(r, c); break; }
+      case 'tsel': {
+        const r = clamp(this.rowAt(y), 0, sh.rows - 1), c = clamp(this.colAt(x), 0, sh.cols - 1);
+        if (r === this.sel.er && c === this.sel.ec) break;
+        const g = norm({ r1: d.ar, c1: d.ac, r2: r, c2: c });
+        const keep = inRange(g, this.sel.r, this.sel.c);
+        this.selectRange(g, keep ? this.sel.r : d.ar, keep ? this.sel.c : d.ac, { er: r, ec: c });
+        break;
+      }
       case 'colsel': { const c = this.colAt(Math.max(x, this.geo().hw)); this.selectRange({ r1: 0, c1: Math.min(d.c0, c), r2: sh.rows - 1, c2: Math.max(d.c0, c) }, this.sel.r, this.sel.c, { er: sh.rows - 1, ec: c }); break; }
       case 'rowsel': { const r = this.rowAt(Math.max(y, HH)); this.selectRange({ r1: Math.min(d.r0, r), c1: 0, r2: Math.max(d.r0, r), c2: sh.cols - 1 }, this.sel.r, this.sel.c, { er: r, ec: sh.cols - 1 }); break; }
       case 'colresize': d.x = Math.max(this.X(d.c) + 2, x); this.render(); break;
@@ -1180,10 +1209,11 @@ export class Grid {
     clearInterval(this.asTimer);
     const vw = this.vw, vh = this.vh, g = this.geo();
     let dx = 0, dy = 0;
-    if (x > vw - 4) dx = 1; else if (x < g.hw + this.fw() && this.drag?.mode !== 'rowsel' && this.drag?.mode !== 'colresize') dx = this.sx > 0 && x < g.hw ? -1 : 0;
-    if (y > vh - 4) dy = 1; else if (y < HH && this.drag?.mode !== 'colsel' && this.drag?.mode !== 'rowresize') dy = this.sy > 0 ? -1 : 0;
+    const edge = this.drag?.touch ? 28 / this.z : 4;
+    if (x > vw - edge) dx = 1; else if (x < g.hw + this.fw() && this.drag?.mode !== 'rowsel' && this.drag?.mode !== 'colresize') dx = this.sx > 0 && x < g.hw ? -1 : 0;
+    if (y > vh - edge) dy = 1; else if (y < HH && this.drag?.mode !== 'colsel' && this.drag?.mode !== 'rowresize') dy = this.sy > 0 ? -1 : 0;
     if (!dx && !dy) return;
-    if (!['sel', 'colsel', 'rowsel', 'fill', 'move', 'point'].includes(this.drag?.mode)) return;
+    if (!['sel', 'tsel', 'colsel', 'rowsel', 'fill', 'move', 'point'].includes(this.drag?.mode)) return;
     this.asTimer = setInterval(() => {
       if (!this.drag) { clearInterval(this.asTimer); return; }
       this.scroller.scrollLeft += dx * 30; this.scroller.scrollTop += dy * 22;
