@@ -255,7 +255,7 @@ export class Sidebar {
       }
       if (r.type === 'list' || r.type === 'range') {
         content.append(checkbox('Izinkan beberapa pilihan', !!r.multi, v => (r.multi = v)),
-          field('Gaya tampilan', select([{ value: 'chip', label: 'Chip' }, { value: 'arrow', label: 'Panah' }, { value: 'plain', label: 'Teks biasa' }], r.chip || 'chip', v => (r.chip = v === 'arrow' ? 'chip' : v))));
+          field('Gaya tampilan', select([{ value: 'chip', label: 'Chip' }, { value: 'arrow', label: 'Panah' }, { value: 'plain', label: 'Teks biasa' }], r.chip || 'chip', v => (r.chip = v))));
       }
       if (r.type === 'checkbox') {
         let custom = r.checked != null;

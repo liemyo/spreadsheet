@@ -10,6 +10,8 @@ import { layout as pageLayout } from './pages.js';
 export const HH = 24;
 export const REF_COLORS = ['#1a73e8', '#d93025', '#8430ce', '#188038', '#e37400', '#c5221f', '#129eaf', '#b06000'];
 const FALLBACK = 'Arial, Helvetica, sans-serif';
+// White-ish text colour: a dropdown arrow on that cell takes the same colour so it stays visible on a dark fill.
+const lightColor = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 186; };
 const URL_RE = /^(https?:\/\/|www\.)[^\s]+$/i;
 
 export function fontOf(st, def) {
@@ -396,7 +398,7 @@ export class Grid {
         if (this.cw(c) === 0) continue;
         const k = r * 16384 + c;
         const cell = cells.get(k);
-        if (!cell && !sh.spillMap.has(k)) continue;
+        if (!cell && !sh.spillMap.has(k) && !(sh.dv.length && dvAt(sh, r, c)?.chip === 'arrow')) continue;
         if (sh.merges.length && sh.mergeAt(r, c)) continue;
         if (c < q.c0 && !(cell && typeof cell.v === 'string') && !(cell && typeof cell.sv === 'string')) continue;
         texts.push({ r, c, x: this.X(c), y, w: this.cw(c), h, cell });
@@ -515,8 +517,17 @@ export class Grid {
     const pad = 3, ind = (st.ind || 0) * 10;
     const wrap = st.wrap === 'wrap' || (typeof text === 'string' && text.includes('\n') && st.wrap !== 'clip' && st.wrap !== 'overflow');
     // chip-style dropdown
-    if (dv && (dv.type === 'list' || dv.type === 'range') && dv.chip !== 'plain') {
+    if (dv && (dv.type === 'list' || dv.type === 'range') && dv.chip !== 'plain' && dv.chip !== 'arrow') {
       this.drawChips(t, dv, text, font, px, st);
+      return;
+    }
+    // arrow-style dropdown: the cell keeps its own colours, the arrow is always visible, text stays clear of it
+    if (dv && (dv.type === 'list' || dv.type === 'range') && dv.chip === 'arrow' && !t.arrowDone) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(t.x, t.y, t.w - 16, t.h); ctx.clip();
+      this.drawCellText({ ...t, w: t.w - 16, arrowDone: true }, q, lineSkip);
+      ctx.restore();
+      this.drawArrow(t, lightColor(st.color) ? st.color : null);
       return;
     }
     if (dv && (dv.type === 'list' || dv.type === 'range') && dv.chip === 'plain' && this.sel.r === r && this.sel.c === c) this.drawArrow(t);
@@ -666,10 +677,10 @@ export class Grid {
     else { ctx.strokeStyle = color || '#5f6368'; ctx.lineWidth = 1.5; ctx.stroke(); }
   }
 
-  drawArrow(t) {
+  drawArrow(t, color) {
     const ctx = this.ctx;
     const x = t.x + t.w - 14, y = t.y + t.h / 2;
-    ctx.fillStyle = '#5f6368';
+    ctx.fillStyle = color || '#5f6368';
     ctx.beginPath(); ctx.moveTo(x, y - 2); ctx.lineTo(x + 8, y - 2); ctx.lineTo(x + 4, y + 3); ctx.closePath(); ctx.fill();
   }
 
@@ -850,9 +861,9 @@ export class Grid {
     };
     // permissions: cells viewers of a share link may edit (green), unlocked cells of a locked sheet (blue)
     const app = this.app;
-    const marks = (list, col) => { for (const g of list || []) { const cq = clampQ(g); if (!cq) continue; const rc = rectOf(cq); ctx.fillStyle = col + '14'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h); strokeSides(rc, cq.sides, 1.5 / this.z, col, [4, 3]); } };
+    const marks = (list, col, tint = true) => { for (const g of list || []) { const cq = clampQ(g); if (!cq) continue; const rc = rectOf(cq); if (tint) { ctx.fillStyle = col + '14'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h); } strokeSides(rc, cq.sides, 1.5 / this.z, col, [4, 3]); } };
     if (app.readOnly || app.settings.showVE) marks(sh.ve, '#1e8e3e');
-    if (sh.protect && !app.readOnly) marks(sh.protectExcept, '#1a73e8');
+    if (sh.protect && !app.readOnly) marks(sh.protectExcept, '#1a73e8', false);
     if (app.settings.breaks && !app.readOnly) this.drawPageBreaks(q);
     const edit = this.edit;
     // formula reference highlights
@@ -1055,7 +1066,7 @@ export class Grid {
     if (dv) {
       if (dv.type === 'checkbox' && Math.abs(x - (rc.x + rc.w / 2)) <= 10 && Math.abs(y - (rc.y + rc.h / 2)) <= 10) return { ...out, area: 'checkbox', r: ar, c: ac };
       if ((dv.type === 'list' || dv.type === 'range') && x >= rc.x + rc.w - 20) return { ...out, area: 'dropdown', r: ar, c: ac };
-      if ((dv.type === 'list' || dv.type === 'range') && dv.chip !== 'plain' && this.hasValue(ar, ac)) return { ...out, area: 'chip', r: ar, c: ac };
+      if ((dv.type === 'list' || dv.type === 'range') && dv.chip !== 'plain' && dv.chip !== 'arrow' && this.hasValue(ar, ac)) return { ...out, area: 'chip', r: ar, c: ac };
     }
     return out;
   }

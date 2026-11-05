@@ -833,7 +833,7 @@ export class App {
         if (q && !it.toLowerCase().includes(q)) return;
         list.append(el('button.dd-item' + (curSet.has(it) ? '.on' : ''), { type: 'button', onclick: () => choose(it) },
           dv.multi ? icon(curSet.has(it) ? 'check_box' : 'check_box_outline_blank', 'sm') : null,
-          el('span.chip', { style: { background: dv.chip === 'plain' ? 'transparent' : dv.colors?.[i] || CHIP_COLORS[0] } }, it)));
+          el('span.chip', { style: { background: dv.chip === 'plain' || dv.chip === 'arrow' ? 'transparent' : dv.colors?.[i] || CHIP_COLORS[0] } }, it)));
       });
       if (!list.children.length) list.append(el('div.muted.pad', 'Tidak ada opsi'));
     };
