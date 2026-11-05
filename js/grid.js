@@ -63,7 +63,7 @@ export class Grid {
     this.colors = {
       bg: v('--g-bg') || '#fff', line: v('--g-line') || '#e1e3e6', hdr: v('--g-hdr') || '#f8f9fa', hdrText: v('--g-hdr-text') || '#5f6368',
       hdrLine: v('--g-hdr-line') || '#c4c7c5', hdrSel: v('--g-hdr-sel') || '#d3e3fd', hdrSelText: v('--g-hdr-sel-text') || '#0b57d0',
-      hdrAll: v('--g-hdr-all') || '#0b57d0', text: v('--g-text') || '#1f1f1f', accent: v('--accent') || '#1a73e8',
+      hdrAll: v('--g-hdr-all') || '#0b57d0', hdrEdge: v('--g-hdr-edge') || '#8b97a8', text: v('--g-text') || '#1f1f1f', accent: v('--accent') || '#1a73e8',
       selFill: v('--g-sel') || 'rgba(26,115,232,.1)', freeze: v('--g-freeze') || '#c4c7c5', link: v('--g-link') || '#1155cc',
     };
     this.render();
@@ -988,6 +988,7 @@ export class Grid {
         ctx.fillText(colName(c), x + w / 2, HH / 2 + 0.5);
         ctx.beginPath(); ctx.moveTo(this.px(x + w), 0); ctx.lineTo(this.px(x + w), HH); ctx.stroke();
       }
+      ctx.strokeStyle = C.hdrEdge;
       ctx.beginPath(); ctx.moveTo(x0, this.px(HH)); ctx.lineTo(x1, this.px(HH)); ctx.stroke();
       ctx.restore();
     };
@@ -1006,6 +1007,7 @@ export class Grid {
         if (h >= 9) ctx.fillText(String(r + 1), g.hw / 2, y + h / 2 + 0.5);
         ctx.beginPath(); ctx.moveTo(0, this.px(y + h)); ctx.lineTo(g.hw, this.px(y + h)); ctx.stroke();
       }
+      ctx.strokeStyle = C.hdrEdge;
       ctx.beginPath(); ctx.moveTo(this.px(g.hw), y0); ctx.lineTo(this.px(g.hw), y1); ctx.stroke();
       ctx.restore();
     };
@@ -1015,7 +1017,7 @@ export class Grid {
     if (sh.freezeR) drawRows(0, sh.freezeR - 1, HH, HH + fh);
     // corner
     ctx.fillStyle = C.hdr; ctx.fillRect(0, 0, g.hw, HH);
-    ctx.strokeStyle = C.hdrLine; ctx.lineWidth = 1 / this.S;
+    ctx.strokeStyle = C.hdrEdge; ctx.lineWidth = 1 / this.S;
     ctx.beginPath(); ctx.moveTo(this.px(g.hw), 0); ctx.lineTo(this.px(g.hw), HH); ctx.moveTo(0, this.px(HH)); ctx.lineTo(g.hw, this.px(HH)); ctx.stroke();
     ctx.fillStyle = C.hdrLine;
     ctx.beginPath(); ctx.moveTo(g.hw - 4, HH - 13); ctx.lineTo(g.hw - 4, HH - 4); ctx.lineTo(g.hw - 13, HH - 4); ctx.closePath(); ctx.fill();

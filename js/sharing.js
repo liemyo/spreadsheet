@@ -1,7 +1,7 @@
 // Sharing and permissions of Amatu Sheets: live share links (see live.js), viewer-editable cells,
 // password-locked sheets with unlocked cells, and the transaction guard that enforces them.
 import { el, icon, inRange, keyR, keyC, rangeAddr, parseRange } from './util.js';
-import { dialog, toast, field, promptDlg } from './ui/ui.js';
+import { dialog, toast, field, promptDlg, secretInput, secretBox, secretMatch } from './ui/ui.js';
 import * as io from './io.js';
 import * as store from './store.js';
 import { Live, rpc, account, linkFor, errText, merge3, eq } from './live.js';
@@ -99,7 +99,11 @@ export function viewerCells(app, e, all = false) {
 // ---------- password lock ----------
 async function sha(text) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
 export async function makeLock(pw) { const salt = crypto.getRandomValues(new Uint32Array(2)).join('-'); return { salt, hash: await sha(salt + '|' + pw) }; }
-export async function checkLock(lock, pw) { return !!lock && (await sha(lock.salt + '|' + pw)) === lock.hash; }
+export async function checkLock(lock, pw) {
+  if (!lock) return false;
+  if ((await sha(lock.salt + '|' + pw)) === lock.hash) return true;
+  return pw !== pw.trim() && (await sha(lock.salt + '|' + pw.trim())) === lock.hash;   // stray space from a phone keyboard
+}
 
 // Editable list of ranges ("A1:B5"), starting from the current selection.
 function rangeList(app, list) {
@@ -127,19 +131,20 @@ function rangeList(app, list) {
 export async function lockDialog(app, sh = app.sheet) {
   if (sh.protect) return unlockDialog(app, sh);
   const open = (sh.protectExcept || []).map(g => ({ ...g }));
-  const pw = el('input.inp', { type: 'password', autocomplete: 'new-password', placeholder: 'Kata sandi' });
-  const pw2 = el('input.inp', { type: 'password', autocomplete: 'new-password', placeholder: 'Ulangi kata sandi' });
+  const pw = secretInput('Kata sandi'), pw2 = secretInput('Ulangi kata sandi');
+  const match = secretMatch(pw, pw2);
   dialog({
     title: `Kunci sheet "${sh.name}"`, width: 520,
     body: el('div.stack',
       el('p.dlg-text', 'Semua sel di sheet ini dikunci: isi, format, baris/kolom dan pengaturan sheet tidak dapat diubah oleh siapa pun (termasuk tautan edit) sampai kunci dibuka dengan kata sandi. Sel izin pelihat (tautan Lihat saja) tetap bisa diisi pelihat.'),
-      el('div.grid2', field('Kata sandi', pw), field('Ulangi', pw2)),
+      el('div.grid2', field('Kata sandi', secretBox(pw)), field('Ulangi', secretBox(pw2))),
+      match.note,
       el('h4', 'Sel yang tetap terbuka untuk diedit'),
       rangeList(app, open)),
     buttons: [{ label: 'Batal' }, { label: 'Kunci sheet', primary: true, run: async () => {
-      if (!pw.value) { toast('Isi kata sandi'); return false; }
-      if (pw.value !== pw2.value) { toast('Kata sandi tidak sama'); return false; }
-      const lock = await makeLock(pw.value);
+      if (!pw.value.trim()) { toast('Isi kata sandi'); pw.focus(); return false; }
+      if (!match.same()) { match.update(); toast(match.diff()); return false; }
+      const lock = await makeLock(pw.value.trim());
       app.permit('Kunci sheet', () => { app.wb.hist.touchMeta(sh); sh.protect = true; sh.lock = lock; sh.protectExcept = open; });
       toast(`Sheet "${sh.name}" dikunci` + (open.length ? ` · ${open.length} rentang tetap terbuka` : ''));
     } }],

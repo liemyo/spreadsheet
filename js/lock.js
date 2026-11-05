@@ -1,7 +1,7 @@
 // File lock: a password (PBKDF2 hash in wb.lock, stored beside the workbook like wb.share) asked before the
 // spreadsheet is shown. Unlocks are remembered for this browser tab only; share links are not affected.
 import { el, icon } from './util.js';
-import { dialog, field, toast } from './ui/ui.js';
+import { dialog, field, toast, secretInput, secretBox, secretMatch } from './ui/ui.js';
 
 const IT = 150000;
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
@@ -13,7 +13,11 @@ async function makeLock(pw, hint) {
   const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
   return { v: 1, salt, it: IT, hash: await derive(pw, salt), hint: hint || '', at: Date.now() };
 }
-const check = async (lock, pw) => !!lock && (await derive(pw, lock.salt, lock.it || IT)) === lock.hash;
+const check = async (lock, pw) => {
+  if (!lock) return false;
+  if ((await derive(pw, lock.salt, lock.it || IT)) === lock.hash) return true;
+  return pw !== pw.trim() && (await derive(pw.trim(), lock.salt, lock.it || IT)) === lock.hash;   // stray space from a phone keyboard
+};
 
 const SK = 'as.unlocked';
 const tag = wb => wb.id + ':' + wb.lock.hash.slice(0, 16);
@@ -23,7 +27,7 @@ export const isOpen = wb => !wb.lock || opened().includes(tag(wb));
 const markOpen = wb => { if (wb.lock && !isOpen(wb)) keep([...opened(), tag(wb)]); };
 const forget = wb => keep(opened().filter(x => !x.startsWith(wb.id + ':')));
 
-const pwInput = (ph, auto) => el('input.inp', { type: 'password', placeholder: ph, autocomplete: 'off', autofocus: auto || null });
+const pwInput = ph => secretInput(ph);
 
 export function clearGate() { document.getElementById('lockscreen')?.remove(); document.body.classList.remove('file-locked'); }
 
@@ -31,7 +35,7 @@ export function clearGate() { document.getElementById('lockscreen')?.remove(); d
 export function gate(app, wb) {
   clearGate();
   if (isOpen(wb)) return;
-  const inp = pwInput('Kata sandi', true);
+  const inp = pwInput('Kata sandi');
   const err = el('div.lk-err', { role: 'alert' });
   const go = el('button.btn.primary', { type: 'submit' }, icon('lock_open'), 'Buka');
   let tries = 0, wait = 0;
@@ -39,7 +43,7 @@ export function gate(app, wb) {
     el('div.lk-ic', icon('lock')),
     el('h2', wb.name || 'Spreadsheet terkunci'),
     el('p.muted', 'Spreadsheet ini dikunci dengan kata sandi.'),
-    inp, wb.lock.hint ? el('div.small.muted.lk-hint', icon('lightbulb'), 'Petunjuk: ' + wb.lock.hint) : null, err,
+    secretBox(inp), wb.lock.hint ? el('div.small.muted.lk-hint', icon('lightbulb'), 'Petunjuk: ' + wb.lock.hint) : null, err,
     el('div.lk-btns', el('button.btn', { type: 'button', onclick: () => app.openOther() }, icon('folder_open'), 'Buka file lain'), go));
   form.addEventListener('submit', async e => {
     e.preventDefault();
@@ -71,24 +75,26 @@ export function menuItems(app) {
 
 function setDialog(app) {
   const wb = app.wb;
-  const cur = wb.lock ? pwInput('Kata sandi saat ini', true) : null;
-  const a = pwInput('Minimal 4 karakter', !cur), b = pwInput('Ketik ulang kata sandi');
+  const cur = wb.lock ? pwInput('Kata sandi saat ini') : null;
+  const a = pwInput('Minimal 4 karakter'), b = pwInput('Ketik ulang kata sandi');
+  const match = secretMatch(a, b);
   const hint = el('input.inp', { placeholder: 'Opsional — jangan tulis kata sandinya', value: wb.lock?.hint || '' });
   const err = el('div.lk-err');
   dialog({
     title: wb.lock ? 'Ubah kata sandi file' : 'Kunci file dengan kata sandi', width: 440,
     body: el('div.stack',
-      cur ? field('Kata sandi saat ini', cur) : null,
-      field('Kata sandi baru', a), field('Konfirmasi kata sandi', b), field('Petunjuk kata sandi', hint), err,
+      cur ? field('Kata sandi saat ini', secretBox(cur)) : null,
+      field('Kata sandi baru', secretBox(a)), field('Konfirmasi kata sandi', secretBox(b)), match.note, field('Petunjuk kata sandi', hint), err,
       el('p.dlg-text.small.muted', 'Kata sandi diminta setiap kali spreadsheet dibuka di tab baru, termasuk di perangkat lain akun Anda. Kata sandi tidak dapat dipulihkan — simpan baik-baik. Tautan Bagikan yang aktif tetap dapat dibuka tanpa kata sandi.')),
     buttons: [{ label: 'Batal' }, { label: wb.lock ? 'Simpan' : 'Kunci', primary: true, run: async () => {
       if (cur && !(await check(wb.lock, cur.value))) { err.textContent = 'Kata sandi saat ini salah.'; return false; }
-      if (a.value.length < 4) { err.textContent = 'Kata sandi minimal 4 karakter.'; return false; }
-      if (a.value !== b.value) { err.textContent = 'Konfirmasi kata sandi tidak sama.'; return false; }
-      if (hint.value && hint.value.includes(a.value)) { err.textContent = 'Petunjuk tidak boleh berisi kata sandi.'; return false; }
+      const next = a.value.trim();
+      if (next.length < 4) { err.textContent = 'Kata sandi minimal 4 karakter.'; return false; }
+      if (!match.same()) { err.textContent = match.diff(); return false; }
+      if (hint.value && hint.value.includes(next)) { err.textContent = 'Petunjuk tidak boleh berisi kata sandi.'; return false; }
       if (app.wb !== wb) return true;
       forget(wb);
-      wb.lock = await makeLock(a.value, hint.value.trim());
+      wb.lock = await makeLock(next, hint.value.trim());
       markOpen(wb);
       await app.save();
       app.updateLockBadge();
@@ -98,10 +104,10 @@ function setDialog(app) {
 }
 
 function removeDialog(app) {
-  const wb = app.wb, cur = pwInput('Kata sandi saat ini', true), err = el('div.lk-err');
+  const wb = app.wb, cur = pwInput('Kata sandi saat ini'), err = el('div.lk-err');
   dialog({
     title: 'Hapus kata sandi', width: 400,
-    body: el('div.stack', el('p.dlg-text', 'Spreadsheet akan dapat dibuka tanpa kata sandi.'), field('Kata sandi saat ini', cur), err),
+    body: el('div.stack', el('p.dlg-text', 'Spreadsheet akan dapat dibuka tanpa kata sandi.'), field('Kata sandi saat ini', secretBox(cur)), err),
     buttons: [{ label: 'Batal' }, { label: 'Hapus kata sandi', danger: true, run: async () => {
       if (!(await check(wb.lock, cur.value))) { err.textContent = 'Kata sandi salah.'; return false; }
       forget(wb);

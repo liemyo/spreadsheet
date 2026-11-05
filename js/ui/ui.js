@@ -141,13 +141,57 @@ export function dialog({ title, body, buttons = [], width = 460, onClose, cls = 
   return { close, el: box };
 }
 
+// Password box for sheet/file passwords. Chrome's password manager must not touch these: it
+// drops the account password into the first box (even with autocomplete=new-password), which then
+// never matches the repeat box, and the user cannot see why behind the dots. So it is a text input
+// masked by CSS, which password managers ignore; browsers without the CSS fall back to type=password.
+export function secretInput(placeholder = '') {
+  const masked = !!window.CSS?.supports?.('-webkit-text-security', 'disc');
+  const inp = el('input.inp' + (masked ? '.secret' : ''), {
+    type: masked ? 'text' : 'password', autocomplete: masked ? 'off' : 'new-password', placeholder,
+    name: 'as-' + Math.random().toString(36).slice(2), spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off',
+    'data-lpignore': 'true', 'data-1p-ignore': 'true', 'data-bwignore': 'true', 'data-form-type': 'other',
+  });
+  inp._masked = masked;
+  return inp;
+}
+
+// The box plus an eye button, so what was actually typed can be checked.
+export function secretBox(inp) {
+  const eye = icon('visibility');
+  const btn = el('button.icon-btn.sm', { type: 'button', tabIndex: -1, 'data-tip': 'Tampilkan kata sandi', 'aria-label': 'Tampilkan kata sandi', onclick: () => {
+    const show = eye.textContent === 'visibility';
+    if (inp._masked) inp.classList.toggle('show', show); else inp.type = show ? 'text' : 'password';
+    eye.textContent = show ? 'visibility_off' : 'visibility';
+    btn.setAttribute('aria-label', show ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi');
+    btn.dataset.tip = show ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi';
+    inp.focus();
+  } }, eye);
+  return el('div.pw-box', inp, btn);
+}
+
+// Live "do they match" line under a new-password + repeat pair; returns the text for a mismatch.
+export function secretMatch(a, b) {
+  const note = el('div.pw-note', { role: 'status' });
+  const diff = () => `Kata sandi tidak sama: kolom pertama ${a.value.length} karakter, kolom ulangi ${b.value.length} karakter.`;
+  const same = () => a.value.trim() === b.value.trim();
+  const update = () => {
+    const on = a.value && b.value;
+    note.className = 'pw-note' + (on ? (same() ? ' ok' : ' bad') : '');
+    note.textContent = !on ? '' : same() ? 'Kata sandi sudah sama.' : diff();
+  };
+  a.addEventListener('input', update); b.addEventListener('input', update);
+  return { note, same, diff, update };
+}
+
 export function promptDlg(title, label, value = '', opts = {}) {
   return new Promise(res => {
-    const inp = el('input.inp', { value, type: opts.type || 'text', placeholder: opts.placeholder || '' });
+    const secret = opts.type === 'password';
+    const inp = secret ? secretInput(opts.placeholder || '') : el('input.inp', { value, type: opts.type || 'text', placeholder: opts.placeholder || '' });
     let done = false;
     dialog({
       title, width: opts.width || 400,
-      body: el('label.field', el('span', label), inp, opts.hint ? el('small.muted', opts.hint) : null),
+      body: el('label.field', el('span', label), secret ? secretBox(inp) : inp, opts.hint ? el('small.muted', opts.hint) : null),
       buttons: [{ label: 'Batal' }, { label: opts.ok || 'OK', primary: true, run: () => { done = true; res(inp.value); } }],
       onClose: () => { if (!done) res(null); },
     });
