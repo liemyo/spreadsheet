@@ -36,6 +36,8 @@ export class Grid {
       el('span', 'baris lagi di bagian bawah'));
     this.spacer.append(this.addRows);
     host.append(this.canvas, this.scroller, this.layer, this.hilite, this.input);
+    this.touchUI = !!window.matchMedia?.('(pointer: coarse)').matches;
+    if (this.touchUI) this.input.inputMode = 'none';
     this.z = 1;
     this.dpr = window.devicePixelRatio || 1;
     this.sel = { ranges: [{ r1: 0, c1: 0, r2: 0, c2: 0 }], r: 0, c: 0, er: 0, ec: 0 };
@@ -909,7 +911,7 @@ export class Grid {
         ctx.strokeRect(this.px(ac.x) + 0.5 / this.S, this.px(ac.y) + 0.5 / this.S, ac.w - 1 / this.S, ac.h - 1 / this.S);
       }
       // fill handle
-      if (!edit && s.ranges.length === 1) {
+      if (!edit && s.ranges.length === 1 && (!this.touchUI || this.tapped)) {
         const g = this.range;
         if (g.r2 >= q.r0 && g.r2 <= q.r1 && g.c2 >= q.c0 && g.c2 <= q.c1) {
           const rc = rectOf(g);
@@ -1029,11 +1031,13 @@ export class Grid {
   hit(x, y, touch = false) {
     const g = this.geo(), sh = this.sh;
     const fw = this.fw(), fh = this.fh();
-    if (x < g.hw && Math.abs(y - (HH + fh)) <= 3 && (sh.freezeR || y <= HH + 2)) return { area: 'freezeR' };
-    if (y < HH && Math.abs(x - (g.hw + fw)) <= 3 && (sh.freezeC || x <= g.hw + 2)) return { area: 'freezeC' };
+    // a finger has no freeze bars, resize edges or move borders: those thin zones only caught swipes
+    if (!touch && x < g.hw && Math.abs(y - (HH + fh)) <= 3 && (sh.freezeR || y <= HH + 2)) return { area: 'freezeR' };
+    if (!touch && y < HH && Math.abs(x - (g.hw + fw)) <= 3 && (sh.freezeC || x <= g.hw + 2)) return { area: 'freezeC' };
     if (x < g.hw && y < HH) return { area: 'corner' };
     if (y < HH) {
       const c = this.colAt(x);
+      if (touch) return { area: 'colhdr', c };
       const xr = this.X(c) + this.cw(c);
       if (Math.abs(x - xr) <= 4) return { area: 'colhdr', c, resize: c };
       if (Math.abs(x - this.X(c)) <= 3 && c > 0) { let p = c - 1; while (p > 0 && !this.cw(p)) p--; return { area: 'colhdr', c, resize: this.cw(p) ? p : c - 1 }; }
@@ -1041,6 +1045,7 @@ export class Grid {
     }
     if (x < g.hw) {
       const r = this.rowAt(y);
+      if (touch) return { area: 'rowhdr', r };
       const yb = this.Y(r) + this.rh(r);
       if (Math.abs(y - yb) <= 3) return { area: 'rowhdr', r, resize: r };
       if (Math.abs(y - this.Y(r)) <= 2 && r > 0) { let p = r - 1; while (p > 0 && !this.rh(p)) p--; return { area: 'rowhdr', r, resize: p }; }
@@ -1049,10 +1054,13 @@ export class Grid {
     const r = this.rowAt(y), c = this.colAt(x);
     const out = { area: 'cell', r, c, x, y };
     // fill handle
-    if (this.sel.ranges.length === 1 && !this.edit) {
+    if (this.sel.ranges.length === 1 && !this.edit && (!touch || this.tapped)) {
       const rc = this.rangeRect(this.range);
-      const tol = touch ? 20 / this.z : 5;
+      const tol = touch ? 16 / this.z : 5;
       if (Math.abs(x - (rc.x + rc.w)) <= tol && Math.abs(y - (rc.y + rc.h)) <= tol) return { ...out, area: 'fill' };
+    }
+    if (this.sel.ranges.length === 1 && !this.edit && !touch) {
+      const rc = this.rangeRect(this.range);
       const onBorder = (Math.abs(x - rc.x) <= 2 || Math.abs(x - (rc.x + rc.w)) <= 2) && y >= rc.y && y <= rc.y + rc.h ||
         (Math.abs(y - rc.y) <= 2 || Math.abs(y - (rc.y + rc.h)) <= 2) && x >= rc.x && x <= rc.x + rc.w;
       if (onBorder) return { ...out, area: 'border' };
@@ -1078,6 +1086,9 @@ export class Grid {
     sc.addEventListener('pointerdown', e => this.onDown(e));
     sc.addEventListener('pointermove', e => this.onMove(e));
     sc.addEventListener('pointerup', e => this.onUp(e));
+    sc.addEventListener('click', e => this.onTap(e));
+    // the compatibility mousedown after a tap would blur the editor and drop the keyboard
+    sc.addEventListener('mousedown', e => { if (this.tap) e.preventDefault(); });
     sc.addEventListener('pointercancel', e => this.onUp(e));
     sc.addEventListener('dblclick', e => this.onDbl(e));
     sc.addEventListener('contextmenu', e => this.onContext(e));
@@ -1104,28 +1115,77 @@ export class Grid {
 
   focus() { if (document.activeElement !== this.input) this.input.focus({ preventScroll: true }); }
 
+  // Finger: inputMode 'none' keeps the on-screen keyboard away until a cell is really edited
+  // (a hardware keyboard still types into the focused input).
+  setTouch(on) {
+    if (on !== this.touchUI) { this.touchUI = on; this.render(); }
+    if (!on) this.input.removeAttribute('inputmode');
+    else if (!this.input.inputMode) this.input.inputMode = 'none';
+  }
+  kbShow() { this.input.inputMode = 'text'; this.input.blur(); }
+  kbHide() {
+    if (this.input.inputMode !== 'none') { this.input.inputMode = 'none'; this.input.blur(); }
+    this.focus();
+  }
+
   onDown(e) {
     if (e.button === 2) return;
     const touch = e.pointerType === 'touch';
-    if (touch !== !!this.touchUI) { this.touchUI = touch; this.render(); }
+    this.setTouch(touch);
+    clearTimeout(this.tapTimer);
+    if (touch) {
+      // A finger on the grid does nothing yet: a swipe belongs to the browser (scroll), and only a
+      // completed tap acts on a cell. The selection handle is the one thing a finger can drag.
+      const { x, y } = this.pos(e);
+      this.tap = null;
+      if (this.hit(x, y, true).area === 'fill') {
+        const g = this.range;
+        this.drag = { mode: 'tsel', touch: true, ar: g.r1, ac: g.c1, cx: e.clientX, cy: e.clientY };
+        this.scroller.setPointerCapture(e.pointerId);
+      } else if (e.isPrimary) this.tap = { id: e.pointerId, cx: e.clientX, cy: e.clientY, t: e.timeStamp };
+      return;
+    }
     const { x, y } = this.pos(e);
-    const h = this.hit(x, y, touch);
+    this.press(e, this.hit(x, y), false);
+  }
+
+  // click = the browser's own "this was a tap, not a scroll"
+  onTap(e) {
+    const t = this.tap;
+    clearTimeout(this.tapTimer);
+    this.tap = null;
+    if (t) this.tapAt(e, t.cx, t.cy);
+  }
+  tapAt(e, cx, cy) {
+    const { x, y } = this.pos({ clientX: cx, clientY: cy });
+    let h = this.hit(x, y, true);
+    if (h.area === 'fill') h = { ...h, area: 'cell' };
+    this.press(e, h, true);
+    this.tapped = true;
+  }
+
+  // A finger press (touch = true, from a finished tap: nothing to capture or drag) or a mouse press.
+  press(e, h, touch) {
     this.app.closePopups?.();
     const edit = this.edit;
     // formula point-and-click
     if (edit && h.area === 'cell' && this.isFormulaEdit() && this.canInsertRef()) {
       e.preventDefault();
-      this.drag = { mode: 'point', r: h.r, c: h.c };
-      this.scroller.setPointerCapture(e.pointerId);
+      if (!touch) {
+        this.drag = { mode: 'point', r: h.r, c: h.c };
+        this.scroller.setPointerCapture(e.pointerId);
+      }
       this.insertRef({ r1: h.r, c1: h.c, r2: h.r, c2: h.c });
       return;
     }
     if (edit && !(h.area === 'cell' && h.r === edit.r && h.c === edit.c && this.sh === edit.sh)) {
       if (!this.commitEdit(0, 0)) return;
     }
-    this.focus();
+    if (touch && this.edit) return; // tapped the cell being edited
+    if (!touch) this.focus();
     e.preventDefault();
     const sh = this.sh;
+    const { x, y } = this.pos(e);
     switch (h.area) {
       case 'freezeR': this.drag = { mode: 'freezeR', y }; break;
       case 'freezeC': this.drag = { mode: 'freezeC', x }; break;
@@ -1155,22 +1215,35 @@ export class Grid {
         if (e.shiftKey) this.extendTo(h.r, h.c);
         else {
           const wasSel = this.sel.r === h.r && this.sel.c === h.c && this.sel.ranges.length === 1;
+          const was = this.tapped && !this.edit ? { ...this.range, n: this.sel.ranges.length, r: this.sel.r, c: this.sel.c } : null;
           this.select(h.r, h.c, { add: e.ctrlKey || e.metaKey, scroll: false });
           if (h.area === 'chip' && wasSel) { this.app.openDropdown(h.r, h.c); return; }
           const cell = sh.get(h.r, h.c);
           const link = cell && (cell.link || cell.hl || (typeof cell.v === 'string' && URL_RE.test(cell.v) ? cell.v : null));
           if (link && (e.ctrlKey || e.metaKey)) { this.app.openLink(link); return; }
+          // second tap on the selected cell opens it for typing (and only then the keyboard)
+          const g = this.range;
+          if (touch && h.area === 'cell' && was && was.n === 1 && was.r === this.sel.r && was.c === this.sel.c && was.r1 === g.r1 && was.c1 === g.c1 && was.r2 === g.r2 && was.c2 === g.c2) {
+            this.kbShow();
+            this.startEdit(null, 'edit');
+            return;
+          }
         }
-        // a finger dragging across cells scrolls the sheet; ranges are picked with the handle
-        this.drag = touch ? null : { mode: 'sel' };
+        this.drag = { mode: 'sel' };
       }
     }
+    if (touch) { this.drag = null; this.kbHide(); return; }
     this.scroller.setPointerCapture(e.pointerId);
   }
 
   onMove(e) {
     const { x, y } = this.pos(e);
     const d = this.drag;
+    if (e.pointerType === 'touch') {
+      if (this.tap && Math.hypot(e.clientX - this.tap.cx, e.clientY - this.tap.cy) > 10) this.tap = null;
+      if (d?.cx !== undefined && Math.hypot(e.clientX - d.cx, e.clientY - d.cy) > 8) d.moved = true;
+      if (!d || (d.touch && !d.moved)) return;
+    }
     if (!d) { this.hover(x, y, e); return; }
     this.lastPos = { x, y };
     this.autoScroll(x, y);
@@ -1238,7 +1311,13 @@ export class Grid {
     const d = this.drag;
     this.drag = null;
     try { this.scroller.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (this.tap) {
+      if (e.type !== 'pointerup' || e.timeStamp - this.tap.t > 700) this.tap = null; // the browser took it as a scroll, or a long press
+      else this.tapTimer = setTimeout(() => this.onTap(e), 350); // in case a browser swallows the click
+    }
     if (!d) return;
+    // the handle's touch zone overlaps the next cells: a press there that never moved was a tap on them
+    if (d.mode === 'tsel' && !d.moved && e.type === 'pointerup') { this.tapAt(e, d.cx, d.cy); return; }
     const sh = this.sh;
     switch (d.mode) {
       case 'colresize': {
@@ -1278,6 +1357,7 @@ export class Grid {
     const h = this.hit(x, y);
     if (h.area === 'colhdr' && h.resize !== undefined) { this.app.cmd('autofitCols', this.colsFor(h.resize)); return; }
     if (h.area === 'rowhdr' && h.resize !== undefined) { this.app.cmd('autofitRows', this.rowsFor(h.resize)); return; }
+    if (this.touchUI) return; // second tap already opened the cell
     if (h.area === 'fill') { this.app.cmd('fillDownDouble'); return; }
     if (h.area === 'cell' || h.area === 'chip') {
       if (this.edit) return;
@@ -1287,6 +1367,8 @@ export class Grid {
 
   onContext(e) {
     e.preventDefault();
+    clearTimeout(this.tapTimer);
+    this.tap = null;
     const { x, y } = this.pos(e);
     const h = this.hit(x, y);
     if (this.edit) this.commitEdit(0, 0);
