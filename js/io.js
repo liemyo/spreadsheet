@@ -1,5 +1,5 @@
 // Import/export, printing and data helpers (current region, flash fill, shuffle).
-import { el, icon, key, keyR, keyC, colName, loadScript, LIBS, download, esc, rangeAddr } from './util.js';
+import { el, icon, key, keyR, keyC, colName, loadScript, LIBS, download, esc, rangeAddr, parseRange, uid } from './util.js';
 import * as PG from './pages.js';
 import { Workbook, newWorkbook, setInput } from './model.js';
 import { parseInput, format, compile } from './format.js';
@@ -208,7 +208,59 @@ export async function importFile(file) {
   const X = window.XLSX;
   const data = new Uint8Array(await file.arrayBuffer());
   const xb = X.read(data, { type: 'array', cellStyles: true, cellFormula: true, cellNF: true, cellDates: false });
-  return fromSheetJS(xb, file.name.replace(/\.[^.]+$/, ''));
+  const wb = fromSheetJS(xb, file.name.replace(/\.[^.]+$/, ''));
+  if (ext === 'xlsx' || ext === 'xlsm') {
+    try { readValidations(X, data, wb); } catch (e) { console.warn('Validasi data tidak dapat dibaca', e); }   // the cells are already in
+  }
+  return wb;
+}
+
+// SheetJS CE drops data validation, so it is read from the file's XML: dropdowns and number/date/length/custom rules,
+// including the x14 form Excel uses when a list points at another sheet.
+const DV_OPS = { between: 'between', notBetween: 'notBetween', greaterThan: 'gt', greaterThanOrEqual: 'ge', lessThan: 'lt', lessThanOrEqual: 'le', equal: 'eq', notEqual: 'ne' };
+const dvOperand = t => (t == null || t === '' ? undefined : !isNaN(Number(t)) ? t : '=' + t.replace(/^=/, ''));
+const childText = (node, name) => { for (const k of node.children) if (k.localName === name) return k.textContent.trim(); return null; };
+
+function dvRule(d) {
+  const type = d.getAttribute('type'), f1 = childText(d, 'formula1'), f2 = childText(d, 'formula2');
+  const rule = { id: uid('dv'), strict: !['warning', 'information'].includes(d.getAttribute('errorStyle')) };
+  if (d.getAttribute('error')) rule.help = d.getAttribute('error');
+  if (type === 'list') {
+    if (!f1) return null;
+    if (f1.startsWith('"')) Object.assign(rule, { type: 'list', items: f1.slice(1, -1).replace(/""/g, '"').split(',').map(x => x.trim()) });
+    else Object.assign(rule, { type: 'range', src: f1.replace(/^=/, '') });
+    // in the file format, showDropDown="1" oddly means the arrow is hidden
+    rule.chip = d.getAttribute('showDropDown') === '1' ? 'plain' : 'arrow';
+    return rule;
+  }
+  if (type === 'custom') return f1 ? Object.assign(rule, { type: 'custom', v1: dvOperand(f1) }) : null;
+  const kind = { decimal: 'number', whole: 'number', date: 'date', textLength: 'textlen' }[type];
+  if (!kind || !f1) return null;
+  return Object.assign(rule, { type: kind, op: DV_OPS[d.getAttribute('operator') || 'between'] || 'between', v1: dvOperand(f1), v2: dvOperand(f2) });
+}
+
+function readValidations(X, data, wb) {
+  const zip = X.CFB.read(data, { type: 'array' });
+  const xml = path => { const e = X.CFB.find(zip, '/' + path); return e ? new DOMParser().parseFromString(new TextDecoder().decode(e.content), 'application/xml') : null; };
+  const book = xml('xl/workbook.xml'), rels = xml('xl/_rels/workbook.xml.rels');
+  if (!book || !rels) return;
+  const target = new Map([...rels.getElementsByTagNameNS('*', 'Relationship')].map(r => [r.getAttribute('Id'), r.getAttribute('Target')]));
+  for (const s of book.getElementsByTagNameNS('*', 'sheet')) {
+    const sh = wb.sheets.find(x => x.name === s.getAttribute('name'));
+    const rid = [...s.attributes].find(a => a.localName === 'id')?.value;
+    const t = target.get(rid);
+    if (!sh || !t) continue;
+    const doc = xml(t.startsWith('/') ? t.slice(1) : 'xl/' + t);
+    if (!doc) continue;
+    for (const d of doc.getElementsByTagNameNS('*', 'dataValidation')) {
+      const rule = dvRule(d);
+      if (!rule) continue;
+      const refs = (d.getAttribute('sqref') || childText(d, 'sqref') || '').split(/\s+/).filter(Boolean);
+      rule.ranges = refs.map(parseRange).filter(g => g && g.r1 < sh.rows && g.c1 < sh.cols)
+        .map(g => ({ r1: g.r1, c1: g.c1, r2: Math.min(g.r2, sh.rows - 1), c2: Math.min(g.c2, sh.cols - 1) }));
+      if (rule.ranges.length) sh.dv.push(rule);
+    }
+  }
 }
 
 const XL_BORDER = { thin: [1, 'solid'], hair: [1, 'dotted'], dotted: [1, 'dotted'], dashed: [1, 'dashed'], medium: [2, 'solid'], mediumDashed: [2, 'dashed'], thick: [3, 'solid'], double: [3, 'double'], dashDot: [1, 'dashed'], mediumDashDot: [2, 'dashed'], slantDashDot: [2, 'dashed'], dashDotDot: [1, 'dotted'], mediumDashDotDot: [2, 'dotted'] };
