@@ -399,13 +399,25 @@ def('MAKEARRAY', ([r, c, l], ctx) => {
   return Array.from({ length: R }, (_, i) => Array.from({ length: C }, (_, j) => scalar(ctx.eng.apply(lam, [i + 1, j + 1]))));
 }, { min: 3, max: 3 });
 def('ISOMITTED', (a, ctx) => E(a[0], ctx) === undefined, { lazy: true, min: 1, max: 1 });
-def('CHOOSE', ([i, ...vals]) => {
-  const ix = unref(i);
-  if (Array.isArray(ix)) return ix.map(row => row.map(k => { const n = Math.floor(num(k)); if (n < 1 || n > vals.length) return ERR.VALUE; return scalar(vals[n - 1]); }));
+// Lazy like Sheets and Excel: an error in a branch that was not picked must not affect the result.
+def('CHOOSE', (a, ctx) => {
+  const ix = unref(E(a[0], ctx));
+  if (ix instanceof FErr) return ix;
+  const pick = n => { const v = E(a[n], ctx); return v === undefined ? 0 : v; };
+  if (Array.isArray(ix)) {
+    const seen = new Map();
+    return ix.map(row => row.map(k => {
+      if (k instanceof FErr) return k;
+      let n; try { n = Math.floor(num(k)); } catch (e) { return e; }
+      if (n < 1 || n >= a.length) return ERR.VALUE;
+      if (!seen.has(n)) seen.set(n, scalar(pick(n)));
+      return seen.get(n);
+    }));
+  }
   const n = Math.floor(num(ix));
-  if (n < 1 || n > vals.length) throw ERR.VALUE;
-  return vals[n - 1] === undefined ? 0 : vals[n - 1];
-}, { min: 2 });
+  if (n < 1 || n >= a.length) throw ERR.VALUE;
+  return pick(n);
+}, { lazy: true, min: 2 });
 
 // ---------- LOOKUP ----------
 function eqLookup(key) {
