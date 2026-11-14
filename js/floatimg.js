@@ -44,7 +44,7 @@ export class FloatImages {
       b.def = im;
       if (b.img.getAttribute('src') !== im.src) b.img.setAttribute('src', im.src);
       b.el.style.zIndex = String(i + 1);
-      b.el.classList.toggle('sig', im.sig !== false);
+      b.el.classList.toggle('fimg-ink', im.sig !== false);   // not 'sig': that is the formula hint popup
     });
     if (this.sel && !ids.has(this.sel)) this.sel = null;
     for (const [id, b] of this.boxes) b.el.classList.toggle('selected', id === this.sel);

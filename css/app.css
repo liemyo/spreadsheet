@@ -664,7 +664,7 @@ h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--text-2);
 .fimg-box { position: absolute; pointer-events: none; outline: none; }
 .fimg-box img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; }
 /* dark sheets: ink signatures turn light like the text (pictures imported from Excel keep their colours) */
-.dark .fimg-box.sig img { filter: invert(1) hue-rotate(180deg); }
+.dark .fimg-box.fimg-ink img { filter: invert(1) hue-rotate(180deg); }
 .fimg-box.selected { pointer-events: auto; cursor: move; touch-action: none; box-shadow: 0 0 0 1.5px var(--accent); border-radius: 2px; }
 .fimg-box.selected .ch-h { display: block; }
 .fimg-menu { position: absolute; left: calc(100% + 6px); top: -2px; display: none !important; background: var(--glass-strong) !important; box-shadow: 0 1px 4px rgba(0, 0, 0, .22); }
