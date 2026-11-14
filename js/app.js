@@ -13,6 +13,7 @@ import { buildToolbar } from './ui/toolbar.js';
 import * as D from './ui/dialogs.js';
 import { Sidebar } from './ui/sidebar.js';
 import { Charts } from './charts.js';
+import { FloatImages } from './floatimg.js';
 import * as store from './store.js';
 import * as io from './io.js';
 import { TEMPLATES } from './templates.js';
@@ -66,6 +67,7 @@ export class App {
     this.cf = new CFEngine(this);
     this.sidebar = new Sidebar(this, document.getElementById('sidebar'));
     this.charts = new Charts(this, this.grid.layer);
+    this.images = new FloatImages(this, this.grid.layer);
     buildMenubar(this, document.getElementById('menubar'));
     this.toolbar = buildToolbar(this, document.getElementById('toolbar'));
     this.bindChrome();
@@ -116,6 +118,7 @@ export class App {
     this.after({ save: !initial });
     this.renderTabs();
     this.charts.reset();
+    this.images.sel = null; this.images.reset();
     const guest = wb.share && !wb.share.owner;
     if (!guest) store.setLastDoc(wb.id);
     history.replaceState(null, '', location.pathname + (guest ? '?share=' + encodeURIComponent(wb.share.key) : '?id=' + encodeURIComponent(wb.id)));
@@ -154,6 +157,7 @@ export class App {
     if (sel.r < sh.rows && sel.c < sh.cols) this.grid.sel = sel;
     this.after({ remote: true });
     this.charts.reset();
+    this.images.reset();
     this.grid.scroller.scrollLeft = sx; this.grid.scroller.scrollTop = sy;
   }
   setRole(s) {
@@ -181,7 +185,7 @@ export class App {
         store.deleteDoc(this.wb.id).catch(() => { });
         const blank = newWorkbook(); blank.id = this.wb.id; blank.share = this.wb.share; blank.name = 'Tautan tidak berlaku';
         this.live = null; this.wb = blank; this.wb.dirty = false; this.titleInput.value = blank.name;
-        this.grid.g = null; this.renderTabs(); this.grid.render();
+        this.grid.g = null; this.renderTabs(); this.images.sel = null; this.images.reset(); this.grid.render();
         this.setRole(this.wb.share);
       }
       toast(errText({ code: 'notfound' }));
@@ -268,6 +272,7 @@ export class App {
     this.updateStatus();
     this.renderTabs();
     this.charts.update();
+    this.images.update();
     this.sidebar.refresh?.();
     if (opts.save !== false && wb.dirty) { this.saveLater(); if (!opts.remote) this.live?.changed(); }
   }
@@ -423,6 +428,7 @@ export class App {
     g.placeEditor();
     this.renderTabs();
     this.charts.reset();
+    this.images.sel = null; this.images.reset();
     this.onSelChange();
     this.sidebar.onSheet?.();
   }
@@ -492,6 +498,7 @@ export class App {
     document.getElementById('zoom-range').value = zoom;
     this.toolbar?.sync();
     this.charts.position();
+    this.images.position();
   }
 
   bandingFor = (sh, r, c) => {
@@ -551,6 +558,8 @@ export class App {
       return;
     }
     if (k === 'F2') { stop(); g.startEdit(null, 'edit'); return; }
+    // a selected signature (floatimg.js) takes Delete / Escape even when the grid kept the focus
+    if (this.images.sel && (k === 'Delete' || k === 'Backspace' || k === 'Escape') && !mod) { stop(); if (k === 'Escape') this.images.select(null, false); else if (!this.readOnly) this.images.remove(this.images.sel); return; }
     if (k === 'Escape') { if (g.copyRange) { g.stopMarquee(); } this.findHits = null; this.sidebar.escape?.(); g.render(); return; }
     if ((k === 'Delete' || k === 'Backspace') && !mod) { stop(); this.cmd('clear', 'contents'); return; }
     if (k === 'PageDown' || k === 'PageUp') {
@@ -1034,7 +1043,7 @@ export const COMMANDS = {
       let base = 'Salinan dari ' + src.name, name = base, n = 2;
       while (wb.sheetByName(name)) name = base + ' ' + n++;
       const sh = wb.addSheet(name, i, src.rows, src.cols);
-      const j = src.toJSON(); j.name = name; j.charts = (j.charts || []).map(c => ({ ...c, id: uid('ch') }));
+      const j = src.toJSON(); j.name = name; j.charts = (j.charts || []).map(c => ({ ...c, id: uid('ch') })); j.images = (j.images || []).map(d => ({ ...d, id: uid('im') }));
       sh.loadJSON(j);
     });
     app.switchSheet(i);
@@ -1213,6 +1222,11 @@ export const COMMANDS = {
   chartAdd: (app, chart) => app.tx('Sisipkan diagram', () => { app.wb.hist.touchMeta(app.sheet); app.sheet.charts.push(chart); }),
   chartUpdate: (app, chart) => app.tx('Edit diagram', () => { app.wb.hist.touchMeta(app.sheet); const i = app.sheet.charts.findIndex(c => c.id === chart.id); if (i >= 0) app.sheet.charts[i] = chart; }),
   chartDelete: (app, id) => app.tx('Hapus diagram', () => { app.wb.hist.touchMeta(app.sheet); app.sheet.charts = app.sheet.charts.filter(c => c.id !== id); }),
+  // floating images over cells (signatures) — floatimg.js
+  imgAdd: (app, d, label = 'Sisipkan gambar') => app.tx(label, () => { const sh = app.sheet; app.wb.hist.touchMeta(sh); sh.images.push(d); }),
+  imgUpdate: (app, d, label = 'Edit gambar') => app.tx(label, () => { const sh = app.sheet, i = sh.images.findIndex(x => x.id === d.id); if (i < 0) return; app.wb.hist.touchMeta(sh); sh.images[i] = d; }),
+  imgDelete: (app, id) => app.tx(app.sheet.images.find(x => x.id === id)?.sig === false ? 'Hapus gambar' : 'Hapus tanda tangan', () => { const sh = app.sheet; app.wb.hist.touchMeta(sh); sh.images = sh.images.filter(x => x.id !== id); }),
+  imgOrder: (app, id, dir) => app.tx('Urutan gambar', () => { const sh = app.sheet, i = sh.images.findIndex(x => x.id === id); if (i < 0) return; app.wb.hist.touchMeta(sh); const [d] = sh.images.splice(i, 1); if (dir > 0) sh.images.push(d); else sh.images.unshift(d); }),
   pivotCreate: (app, def, newSheet = true) => {
     let target;
     const i = app.wb.active + 1;

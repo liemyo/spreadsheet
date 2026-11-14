@@ -659,6 +659,24 @@ h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--text-2);
 .h-n { left: calc(50% - 5px); top: -5px; cursor: ns-resize; } .h-s { left: calc(50% - 5px); bottom: -5px; cursor: ns-resize; }
 .h-e { right: -5px; top: calc(50% - 5px); cursor: ew-resize; } .h-w { left: -5px; top: calc(50% - 5px); cursor: ew-resize; }
 
+/* ---------- floating images: signatures / stamps over cells (floatimg.js) ---------- */
+/* not selected: the grid hit-tests them (pointer-events none keeps wheel/touch scrolling on the sheet) */
+.fimg-box { position: absolute; pointer-events: none; outline: none; }
+.fimg-box img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; }
+/* dark sheets: ink signatures turn light like the text (pictures imported from Excel keep their colours) */
+.dark .fimg-box.sig img { filter: invert(1) hue-rotate(180deg); }
+.fimg-box.selected { pointer-events: auto; cursor: move; touch-action: none; box-shadow: 0 0 0 1.5px var(--accent); border-radius: 2px; }
+.fimg-box.selected .ch-h { display: block; }
+.fimg-menu { position: absolute; left: calc(100% + 6px); top: -2px; display: none !important; background: var(--glass-strong) !important; box-shadow: 0 1px 4px rgba(0, 0, 0, .22); }
+.fimg-box.selected .fimg-menu { display: inline-grid !important; }
+body.ro .fimg-box.selected { cursor: default; }
+body.ro .fimg-box .ch-h { display: none !important; }
+@media (pointer: coarse) {
+  .fimg-box .ch-h { width: 18px; height: 18px; border-radius: 50%; }
+  .fimg-box .h-nw { left: -9px; top: -9px; } .fimg-box .h-ne { right: -9px; top: -9px; }
+  .fimg-box .h-sw { left: -9px; bottom: -9px; } .fimg-box .h-se { right: -9px; bottom: -9px; }
+}
+
 /* ---------- toasts & loader ---------- */
 #toasts { position: fixed; left: 20px; bottom: 60px; z-index: 95; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .toast {

@@ -17,6 +17,8 @@ export class Cell {
 
 const snapCell = c => (c ? { v: c.v, f: c.f, s: c.s, note: c.note, link: c.link } : null);
 const clone = o => (o == null ? o : JSON.parse(JSON.stringify(o)));
+// Floating images (signatures) keep their data URL string shared between snapshots instead of copying it every time.
+const cloneImg = d => ({ ...d, anchor: { ...d.anchor } });
 
 export class Sheet {
   constructor(wb, name, rows = 1000, cols = 26, id = uid('s')) {
@@ -28,6 +30,8 @@ export class Sheet {
     this.merges = []; this.mergeIx = null;
     this.freezeR = 0; this.freezeC = 0;
     this.cf = []; this.dv = []; this.filter = null; this.charts = []; this.banding = [];
+    // images: floating pictures over cells (signatures / stamps) — {id, anchor:{r,c}, dx, dy, w, h, src, name, sig}, see floatimg.js
+    this.images = [];
     this.tab = null; this.grid = true; this.protect = false; this.hidden = false; this.pivot = null;
     // protectExcept: cells left unlocked in a protected sheet; lock: {salt, hash} password; ve: cells viewers of a share link may edit
     this.protectExcept = []; this.lock = null; this.ve = [];
@@ -124,16 +128,19 @@ export class Sheet {
   setMerges(list) { this.wb.hist.touchMeta(this); this.merges = list; this.mergeIx = null; this.layoutV++; }
 
   metaSnapshot() {
-    return clone({
+    const m = clone({
       name: this.name, rows: this.rows, cols: this.cols, colW: [...this.colW], rowH: [...this.rowH], manualH: [...this.manualH],
       hiddenR: [...this.hiddenR], hiddenC: [...this.hiddenC], filteredR: [...this.filteredR], merges: this.merges,
       freezeR: this.freezeR, freezeC: this.freezeC, cf: this.cf, dv: this.dv, filter: this.filter, charts: this.charts,
       banding: this.banding, tab: this.tab, grid: this.grid, protect: this.protect, hidden: this.hidden, pivot: this.pivot,
       protectExcept: this.protectExcept, lock: this.lock, ve: this.ve, page: this.page,
     });
+    m.images = this.images.map(cloneImg);
+    return m;
   }
   loadMeta(m) {
-    m = clone(m);
+    const imgs = m.images;
+    m = clone({ ...m, images: undefined });
     this.name = m.name; this.rows = m.rows; this.cols = m.cols;
     this.colW = new Map(m.colW); this.rowH = new Map(m.rowH); this.manualH = new Set(m.manualH || []);
     this.hiddenR = new Set(m.hiddenR); this.hiddenC = new Set(m.hiddenC); this.filteredR = new Set(m.filteredR || []);
@@ -144,6 +151,7 @@ export class Sheet {
     this.hidden = !!m.hidden; this.pivot = m.pivot || null;
     this.protectExcept = m.protectExcept || []; this.lock = m.lock || null; this.ve = m.ve || [];
     this.page = m.page || null;
+    this.images = (Array.isArray(imgs) ? imgs : []).filter(d => d && d.id && d.src && d.anchor).map(cloneImg);
     this.layoutV++;
   }
   toJSON() {
@@ -444,7 +452,7 @@ export function insertDelete(wb, sh, axis, at, n) {
   }
   sh.banding = sh.banding.map(b => { const g = shiftRange(b, axis, at, n); return g ? { ...b, ...g } : null; }).filter(Boolean);
   if (sh.filter) { const g = shiftRange(sh.filter, axis, at, n); sh.filter = g ? { ...sh.filter, ...g } : null; }
-  for (const ch of sh.charts) {
+  for (const ch of [...sh.charts, ...sh.images]) {
     const p = axis === 'r' ? 'r' : 'c';
     if (ch.anchor[p] >= at) ch.anchor[p] = Math.max(at, ch.anchor[p] + n);
   }

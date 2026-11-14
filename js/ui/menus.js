@@ -185,6 +185,7 @@ export function menus(app) {
       { sep: true },
       { label: 'Diagram', icon: 'insert_chart', run: () => app.sidebar.open('chart', { create: true }) },
       { label: 'Tabel pivot', icon: 'pivot_table_chart', run: () => D.pivotDialog(app) },
+      { label: 'Tanda tangan', icon: 'signature', run: () => app.images.insertDialog() },
       { label: 'Gambar dalam sel', icon: 'image', run: async () => { const u = await promptDlg('Sisipkan gambar dalam sel', 'URL gambar', 'https://'); if (u && u !== 'https://') { const g = app.grid; app.tx('Gambar', () => app.sheet.put(g.sel.r, g.sel.c, { f: `IMAGE("${u.replace(/"/g, '""')}")`, v: null })); } } },
       { label: 'Fungsi', icon: 'functions', sub: () => functionItems(app) },
       { sep: true },
@@ -389,6 +390,7 @@ export function cellContextMenu(app) {
     { label: 'Sisipkan catatan', icon: 'sticky_note_2', kbd: 'Shift+F2', run: () => D.noteDialog(app) },
     { label: 'Dropdown', icon: 'arrow_drop_down_circle', run: () => app.cmd('insertDropdown') },
     { label: 'Diagram', icon: 'insert_chart', run: () => app.sidebar.open('chart', { create: true }) },
+    { label: 'Sisipkan tanda tangan', icon: 'signature', run: () => app.images.insertDialog() },
     { sep: true },
     { label: 'Halaman cetak', icon: 'insert_page_break', sub: () => PG.layoutMenu(app).filter(x => x.sep || ['move_down', 'content_cut', 'horizontal_rule', 'title', 'insert_page_break', 'tune'].includes(x.icon)) },
     { label: 'Lihat tindakan sel lainnya', icon: 'more_horiz', sub: [

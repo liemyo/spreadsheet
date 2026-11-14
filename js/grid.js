@@ -340,6 +340,7 @@ export class Grid {
     if (this.drag?.mode === 'rowresize') { ctx.fillStyle = this.colors.accent; ctx.fillRect(0, this.drag.y - 1, W, 2); }
     this.placeEditor();
     this.app.charts?.position();
+    this.app.images?.position();
   }
 
   px(v) { return (Math.round(v * this.S) + 0.5) / this.S; }
@@ -1055,6 +1056,8 @@ export class Grid {
     }
     const r = this.rowAt(y), c = this.colAt(x);
     const out = { area: 'cell', r, c, x, y };
+    // floating image (signature) over the cells; not while typing a formula (cells under it stay pickable)
+    if (!this.edit && this.app.images) { const id = this.app.images.at(x, y); if (id) return { ...out, area: 'image', id }; }
     // fill handle
     if (this.sel.ranges.length === 1 && !this.edit && (!touch || this.tapped)) {
       const rc = this.rangeRect(this.range);
@@ -1169,6 +1172,8 @@ export class Grid {
   // A finger press (touch = true, from a finished tap: nothing to capture or drag) or a mouse press.
   press(e, h, touch) {
     this.app.closePopups?.();
+    if (h.area === 'image') { this.app.images.press(e, h.id, touch); return; }
+    if (this.app.images?.sel) this.app.images.select(null, false);
     const edit = this.edit;
     // formula point-and-click
     if (edit && h.area === 'cell' && this.isFormulaEdit() && this.canInsertRef()) {
@@ -1357,6 +1362,7 @@ export class Grid {
   onDbl(e) {
     const { x, y } = this.pos(e);
     const h = this.hit(x, y);
+    if (h.area === 'image') { this.app.images.replace(h.id); return; }
     if (h.area === 'colhdr' && h.resize !== undefined) { this.app.cmd('autofitCols', this.colsFor(h.resize)); return; }
     if (h.area === 'rowhdr' && h.resize !== undefined) { this.app.cmd('autofitRows', this.rowsFor(h.resize)); return; }
     if (this.touchUI) return; // second tap already opened the cell
@@ -1373,6 +1379,7 @@ export class Grid {
     this.tap = null;
     const { x, y } = this.pos(e);
     const h = this.hit(x, y);
+    if (h.area === 'image') { this.app.images.select(h.id); this.app.images.menu(h.id, { x: e.clientX, y: e.clientY }); return; }
     if (this.edit) this.commitEdit(0, 0);
     const sh = this.sh;
     const inSel = (r, c) => this.sel.ranges.some(g => inRange(g, r, c));
@@ -1392,7 +1399,7 @@ export class Grid {
     const h = this.hit(x, y);
     const cur = {
       colhdr: h.resize !== undefined ? 'col-resize' : 'default', rowhdr: h.resize !== undefined ? 'row-resize' : 'default',
-      fill: 'crosshair', border: 'move', filterbtn: 'pointer', checkbox: 'pointer', dropdown: 'pointer', chip: 'pointer',
+      fill: 'crosshair', border: 'move', filterbtn: 'pointer', checkbox: 'pointer', dropdown: 'pointer', chip: 'pointer', image: this.app.readOnly ? 'default' : 'move',
       freezeR: 'row-resize', freezeC: 'col-resize', corner: 'default',
     }[h.area] || 'cell';
     this.scroller.style.cursor = cur;

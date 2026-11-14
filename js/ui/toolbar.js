@@ -100,6 +100,7 @@ export function buildToolbar(app, host) {
         btn('link', `Sisipkan link|${M}+K`, () => D.linkDialog(app)),
         btn('add_comment', 'Sisipkan catatan|Shift+F2', () => D.noteDialog(app)),
         btn('insert_chart', 'Sisipkan diagram', () => app.sidebar.open('chart', { create: true })),
+        btn('signature', 'Sisipkan tanda tangan', () => app.images.insertDialog()),
         btn('filter_alt', `Buat filter|${M}+Shift+F`, () => app.cmd('toggleFilter'), { ref: 'filter' }),
         btn('table_chart', 'Warna bergantian / Format sebagai tabel', () => app.sidebar.open('banding')),
         btn('functions', 'Fungsi', a => openMenu(functionItems(app), a.getBoundingClientRect()), { caret: true }),

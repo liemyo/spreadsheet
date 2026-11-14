@@ -3,6 +3,7 @@
 import { el, icon, esc, colName, rangeAddr, keyR, keyC } from './util.js';
 import { dialog, field, select, checkbox, toast, segmented } from './ui/ui.js';
 import { sheetHTML } from './io.js';
+import { imageExtent } from './imgcore.js';
 
 export const PAPER = {
   a4: { n: 'A4', mm: [210, 297] },
@@ -44,10 +45,15 @@ export function paperPx(p) {
   return { w, h, W: w / 25.4 * 96, H: h / 25.4 * 96 };
 }
 
-// Rows/cols that get printed: the print area, or the used range grown over merges, charts excluded.
+// Rows/cols that get printed: the print area, or the used range grown over merges and signatures, charts excluded.
 export function printRange(sh, p = setup(sh)) {
   if (p.area) return { ...p.area };
-  const u = sh.usedRange();
+  let u = sh.usedRange();
+  for (const d of sh.images || []) {
+    const x = imageExtent(sh, d);
+    if (!u) u = { r1: 0, c1: 0, r2: x.r2, c2: x.c2 };
+    else { u.r1 = Math.min(u.r1, x.r1); u.c1 = Math.min(u.c1, x.c1); u.r2 = Math.max(u.r2, x.r2); u.c2 = Math.max(u.c2, x.c2); }
+  }
   if (!u) return null;
   for (const m of sh.merges) if (m.r1 <= u.r2 && m.c1 <= u.c2) { u.r2 = Math.max(u.r2, m.r2); u.c2 = Math.max(u.c2, m.c2); }
   return u;
@@ -60,6 +66,12 @@ function autoTables(sh, g) {
     if (c.empty || (c.v == null && c.f == null)) continue;
     const r = keyR(k), cc = keyC(k);
     if (r >= g.r1 && r <= g.r2 && cc >= g.c1 && cc <= g.c2) rows.add(r);
+  }
+  // rows under a signature count as content: "Dibuat oleh" … signature … name stay on one page
+  for (const d of sh.images || []) {
+    const x = imageExtent(sh, d);
+    if (x.c2 < g.c1 || x.c1 > g.c2) continue;
+    for (let r = Math.max(x.r1, g.r1); r <= Math.min(x.r2, g.r2); r++) rows.add(r);
   }
   const out = [];
   let s = -1;
@@ -286,6 +298,7 @@ table.sheet.grid td{outline:1px solid #d9d9d9;outline-offset:-0.5px}table.sheet 
 .pg-in{position:relative;overflow:hidden;display:flex;flex-direction:column}
 .pg-in.vc{justify-content:center}.pg-z{transform-origin:0 0}.pg-in.hc .pg-z{margin:0 auto}
 .pg-num{text-align:center;font:9pt Arial,sans-serif;color:#555}
+.pg{isolation:isolate}.pg-t{position:relative;overflow:hidden;width:max-content;max-width:none}
 h1{font:600 13pt Arial,sans-serif;margin:0 0 4px}.meta{color:#666;font-size:8pt;margin-bottom:8px}
 .bar{position:sticky;top:0;z-index:2;display:flex;gap:10px;align-items:center;justify-content:center;padding:10px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);font:500 13px Inter,Arial,sans-serif;color:#3c4043;box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .bar button{font:500 13px Inter,Arial;background:#1a73e8;color:#fff;border:0;border-radius:18px;padding:8px 18px;cursor:pointer}
@@ -296,8 +309,9 @@ function pageHTML(app, sh, L, rows, cols, idx, total, first) {
   const p = L.p;
   const tables = [];
   if (first && p.title) tables.push(`<h1>${esc(app.wb.name)}</h1><div class="meta">${esc(sh.name)} · dicetak ${new Date().toLocaleString('id-ID')}</div>`);
-  if (L.tr && rows.r1 > L.tr.r2) tables.push(sheetHTML(app, sh, { r1: L.tr.r1, r2: L.tr.r2, c1: cols.c1, c2: cols.c2 }, { grid: p.grid, clip: true }));
-  tables.push(sheetHTML(app, sh, { ...rows, c1: cols.c1, c2: cols.c2 }, { grid: p.grid, clip: true }));
+  if (L.tr && rows.r1 > L.tr.r2) tables.push(sheetHTML(app, sh, { r1: L.tr.r1, r2: L.tr.r2, c1: cols.c1, c2: cols.c2 }, { grid: p.grid, clip: true, images: false }));
+  // the wrapper cuts a signature that crosses the page edge; the next page shows the rest
+  tables.push(`<div class="pg-t">${sheetHTML(app, sh, { ...rows, c1: cols.c1, c2: cols.c2 }, { grid: p.grid, clip: true })}</div>`);
   // zoom keeps layout size in step with the scale, so centering and the page height stay exact
   return `<div class="pg-in${p.hc ? ' hc' : ''}${p.vc ? ' vc' : ''}" style="width:${L.cw.toFixed(2)}px;height:${(L.ch - 0.5).toFixed(2)}px"><div class="pg-z" style="zoom:${L.scale.toFixed(4)}">${tables.join('')}</div></div>${p.num ? `<div class="pg-num" style="height:${NUM_H}px;line-height:${NUM_H}px">${idx} / ${total}</div>` : ''}`;
 }

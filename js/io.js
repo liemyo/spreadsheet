@@ -7,6 +7,7 @@ import { FErr } from './formula/core.js';
 import { Special } from './formula/functions.js';
 import { dialog, toast, select, checkbox, field } from './ui/ui.js';
 import { snapRange, writeSnap } from './ops.js';
+import { imagesForPrint } from './imgcore.js';
 
 export function peekValue(text) {
   const p = parseInput(text);
@@ -211,8 +212,81 @@ export async function importFile(file) {
   const wb = fromSheetJS(xb, file.name.replace(/\.[^.]+$/, ''));
   if (ext === 'xlsx' || ext === 'xlsm') {
     try { readValidations(X, data, wb); } catch (e) { console.warn('Validasi data tidak dapat dibaca', e); }   // the cells are already in
+    try { await readPictures(X, data, wb); } catch (e) { console.warn('Gambar tidak dapat dibaca', e); }
   }
   return wb;
+}
+
+// Pictures over cells (signatures, stamps, logos) → sheet.images; SheetJS CE drops them. Big photos are scaled down
+// so the workbook stays small enough to save, sync and share.
+async function readPictures(X, data, wb) {
+  const zip = X.CFB.read(data, { type: 'array' });
+  const file = path => { const e = X.CFB.find(zip, '/' + path); return e && e.content ? e.content : null; };
+  const xml = path => { const b = file(path); return b ? new DOMParser().parseFromString(new TextDecoder().decode(b), 'application/xml') : null; };
+  const relsOf = path => {
+    const doc = xml(path.replace(/([^/]+)$/, '_rels/$1.rels')), m = new Map();
+    for (const r of doc ? doc.getElementsByTagNameNS('*', 'Relationship') : []) m.set(r.getAttribute('Id'), { type: r.getAttribute('Type') || '', target: r.getAttribute('Target') || '' });
+    return m;
+  };
+  const resolve = (base, t) => {
+    if (t.startsWith('/')) return t.slice(1);
+    const parts = base.split('/').slice(0, -1);
+    for (const seg of t.split('/')) { if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg); }
+    return parts.join('/');
+  };
+  const kid = (n, name) => n && [...n.children].find(c => c.localName === name);
+  const num = (n, name) => +(kid(n, name)?.textContent || 0);
+  const EMU = 9525;
+  const book = xml('xl/workbook.xml'), wbRels = relsOf('xl/workbook.xml');
+  if (!book) return;
+  for (const s of book.getElementsByTagNameNS('*', 'sheet')) {
+    const sh = wb.sheets.find(x => x.name === s.getAttribute('name'));
+    const rid = [...s.attributes].find(a => a.localName === 'id')?.value;
+    const t = wbRels.get(rid);
+    if (!sh || !t) continue;
+    const part = resolve('xl/workbook.xml', t.target);
+    for (const rel of relsOf(part).values()) {
+      if (!/\/drawing$/.test(rel.type)) continue;
+      const dPath = resolve(part, rel.target), doc = xml(dPath), dRels = relsOf(dPath);
+      if (!doc) continue;
+      for (const anchor of [...doc.documentElement.children]) {
+        if (!/Anchor$/.test(anchor.localName)) continue;
+        const pic = kid(anchor, 'pic');
+        const blip = pic && pic.getElementsByTagNameNS('*', 'blip')[0];
+        const embed = blip && [...blip.attributes].find(a => a.localName === 'embed')?.value;
+        const media = embed && dRels.get(embed);
+        if (!media) continue;
+        const mPath = resolve(dPath, media.target), bytes = file(mPath), ext = (mPath.split('.').pop() || '').toLowerCase();
+        const type = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif' }[ext];
+        if (!bytes || !type || bytes.length > 8e6) continue;
+        const from = kid(anchor, 'from'), to = kid(anchor, 'to');
+        let r = from ? num(from, 'row') : 0, c = from ? num(from, 'col') : 0, dx = from ? num(from, 'colOff') / EMU : 0, dy = from ? num(from, 'rowOff') / EMU : 0;
+        if (anchor.localName === 'absoluteAnchor') { const pos = kid(anchor, 'pos'); dx = +(pos?.getAttribute('x') || 0) / EMU; dy = +(pos?.getAttribute('y') || 0) / EMU; r = c = 0; }
+        const xe = pic.getElementsByTagNameNS('*', 'xfrm')[0], ex = (xe && kid(xe, 'ext')) || kid(anchor, 'ext');
+        let w = +(ex?.getAttribute('cx') || 0) / EMU, h = +(ex?.getAttribute('cy') || 0) / EMU;
+        if ((!w || !h) && to) {
+          const sum = (a, b, f) => { let v = 0; for (let i = a; i < b; i++) v += f(i); return v; };
+          w = sum(c, num(to, 'col'), i => sh.colWidth(i)) + num(to, 'colOff') / EMU - dx;
+          h = sum(r, num(to, 'row'), i => sh.rowHeight(i)) + num(to, 'rowOff') / EMU - dy;
+        }
+        if (!(w > 1 && h > 1) || r >= sh.rows || c >= sh.cols) continue;
+        const nv = pic.getElementsByTagNameNS('*', 'cNvPr')[0], name = nv?.getAttribute('descr') || nv?.getAttribute('name') || 'Gambar';
+        sh.images.push({ id: uid('im'), name, src: await pictureURL(bytes, type), anchor: { r, c }, dx: Math.max(0, dx), dy: Math.max(0, dy), w: Math.round(w * 10) / 10, h: Math.round(h * 10) / 10, sig: /tanda tangan|signature|ttd|paraf|stempel/i.test(name) });
+      }
+    }
+  }
+}
+async function pictureURL(bytes, type) {
+  const blob = new Blob([bytes], { type });
+  if (bytes.length > 600e3 && type !== 'image/gif') {
+    try {
+      const bmp = await createImageBitmap(blob), k = Math.min(1, 1400 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+      const x = cv.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(bmp, 0, 0, cv.width, cv.height);
+      return cv.toDataURL(type === 'image/png' ? 'image/png' : 'image/jpeg', .86);
+    } catch { /* keep the original */ }
+  }
+  return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
 }
 
 // SheetJS CE drops data validation, so it is read from the file's XML: dropdowns and number/date/length/custom rules,
@@ -438,7 +512,83 @@ export async function exportXLSX(app, bookType = 'xlsx') {
     X.utils.book_append_sheet(out, ws, name);
   }
   if (wb.names.size) out.Workbook = { Names: [...wb.names.values()].map(n => ({ Name: n.name, Ref: n.ref })) };
+  if (bookType === 'xlsx' && wb.sheets.some(sh => sh.images?.length)) {
+    try {
+      const data = xlsxWithImages(X, X.write(out, { bookType, type: 'array', cellStyles: true, compression: true }), wb);
+      download(`${wb.name}.xlsx`, new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      return;
+    } catch (e) { console.error(e); toast('Tanda tangan tidak dapat ikut diekspor ke Excel'); }
+  }
   X.writeFile(out, `${wb.name}.${bookType}`, { bookType, cellStyles: true, compression: true });
+}
+
+// Floating images (signatures) as Excel pictures: SheetJS CE writes none, so the drawing parts are added to its zip.
+// Each picture is a oneCellAnchor (moves with its cell, keeps its size), like the grid.
+function xlsxWithImages(X, data, wb) {
+  const zip = X.CFB.read(new Uint8Array(data), { type: 'array' });
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const get = p => { const e = X.CFB.find(zip, '/' + p); return e && e.content ? dec.decode(e.content) : null; };
+  const put = (p, v) => X.CFB.utils.cfb_add(zip, '/' + p, typeof v === 'string' ? enc.encode(v) : v);
+  const attr = (tag, n) => (new RegExp('\\b' + n + '="([^"]*)"').exec(tag) || [])[1];
+  const rels = {};
+  for (const m of (get('xl/_rels/workbook.xml.rels') || '').matchAll(/<Relationship\b[^>]*>/g)) rels[attr(m[0], 'Id')] = attr(m[0], 'Target');
+  const sheetParts = [...(get('xl/workbook.xml') || '').matchAll(/<sheet\b[^>]*>/g)].map(m => {
+    const t = rels[attr(m[0], 'r:id')];
+    return t ? (t.startsWith('/') ? t.slice(1) : 'xl/' + t) : null;
+  });
+  const EMU = 9525, R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  let ct = get('[Content_Types].xml'), media = 0, dn = 0;
+  const saved = new Map();   // the same signature placed several times is stored once
+  wb.sheets.forEach((sh, i) => {
+    const part = sheetParts[i];
+    if (!sh.images?.length || !part || !get(part)) return;
+    do dn++; while (get(`xl/drawings/drawing${dn}.xml`));
+    const drawing = `xl/drawings/drawing${dn}.xml`, dRels = [], anchors = [];
+    sh.images.forEach((d, k) => {
+      const m = /^data:image\/(png|jpe?g|gif);base64,(.*)$/.exec(d.src || '');
+      if (!m) return;
+      const ext = m[1] === 'jpg' ? 'jpeg' : m[1];
+      let file = saved.get(d.src);
+      if (!file) {
+        const bin = atob(m[2]), bytes = new Uint8Array(bin.length);
+        for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+        do media++; while (get(`xl/media/image${media}.${ext}`));
+        file = `image${media}.${ext}`;
+        put('xl/media/' + file, bytes);
+        saved.set(d.src, file);
+      }
+      if (!new RegExp(`Extension="${ext}"`, 'i').test(ct)) ct = ct.replace('<Default ', `<Default Extension="${ext}" ContentType="image/${ext}"/><Default `);
+      dRels.push(`<Relationship Id="rId${k + 1}" Type="${R_NS}/image" Target="../media/${file}"/>`);
+      // offsets must stay inside the anchor cell
+      let r = Math.min(d.anchor.r, sh.rows - 1), c = Math.min(d.anchor.c, sh.cols - 1), dx = Math.max(0, d.dx), dy = Math.max(0, d.dy);
+      while (c < sh.cols - 1 && dx >= sh.colWidth(c)) { dx -= sh.colWidth(c); c++; }
+      while (r < sh.rows - 1 && dy >= sh.rowHeight(r)) { dy -= sh.rowHeight(r); r++; }
+      const cx = Math.round(d.w * EMU), cy = Math.round(d.h * EMU), nm = esc(d.name || 'Tanda tangan');
+      anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>${c}</xdr:col><xdr:colOff>${Math.round(dx * EMU)}</xdr:colOff><xdr:row>${r}</xdr:row><xdr:rowOff>${Math.round(dy * EMU)}</xdr:rowOff></xdr:from><xdr:ext cx="${cx}" cy="${cy}"/>`
+        + `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${k + 2}" name="${nm} ${k + 1}" descr="${nm}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>`
+        + `<xdr:blipFill><a:blip r:embed="rId${k + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>`
+        + `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`);
+    });
+    if (!anchors.length) return;
+    put(drawing, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="${R_NS}">${anchors.join('')}</xdr:wsDr>`);
+    put(`xl/drawings/_rels/drawing${dn}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${dRels.join('')}</Relationships>`);
+    ct = ct.replace('</Types>', `<Override PartName="/${drawing}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`);
+    // worksheet → drawing relationship
+    const relPath = part.replace(/([^/]+)$/, '_rels/$1.rels');
+    let sr = get(relPath) || `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+    let rid = 'rIdSig1'; for (let n = 2; sr.includes(`Id="${rid}"`); n++) rid = 'rIdSig' + n;
+    sr = sr.replace('</Relationships>', `<Relationship Id="${rid}" Type="${R_NS}/drawing" Target="../drawings/drawing${dn}.xml"/></Relationships>`);
+    put(relPath, sr);
+    // <drawing> goes after headerFooter / breaks / ignoredErrors, before legacyDrawing, tableParts and extLst
+    let xml = get(part);
+    if (!/xmlns:r=/.test(xml.slice(0, xml.indexOf('>', xml.indexOf('<worksheet')) + 1))) xml = xml.replace(/<worksheet\b/, `<worksheet xmlns:r="${R_NS}"`);
+    const tag = `<drawing r:id="${rid}"/>`;
+    const at = /<(legacyDrawing|legacyDrawingHF|drawingHF|picture|oleObjects|controls|webPublishItems|tableParts|extLst)\b/.exec(xml);
+    xml = at ? xml.slice(0, at.index) + tag + xml.slice(at.index) : xml.replace('</worksheet>', tag + '</worksheet>');
+    put(part, xml);
+  });
+  put('[Content_Types].xml', ct);
+  return new Uint8Array(X.CFB.write(zip, { fileType: 'zip', type: 'array', compression: true }));
 }
 
 function cssBorder(b) { return b ? `${b.style === 'double' ? 3 : b.w || 1}px ${b.style || 'solid'} ${b.color || '#000'}` : ''; }
@@ -454,6 +604,8 @@ export function sheetHTML(app, sh, g, opts = {}) {
     merged.set(key(m.r1, m.c1), m);
     for (let r = m.r1; r <= m.r2; r++) for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) skip.add(key(r, c));
   }
+  // signatures / floating images, attached to the cell under their top-left corner (opts.images === false: none)
+  const imgs = opts.images === false ? new Map() : imagesForPrint(sh, g, merged, skip, key);
   let tw = 0;
   for (let c = g.c1; c <= g.c2; c++) tw += sh.colWidth(c);
   let html = `<table class="sheet${opts.grid ? ' grid' : ''}"${opts.clip ? ` style="width:${tw}px"` : ''}><colgroup>`;
@@ -491,6 +643,11 @@ export function sheetHTML(app, sh, g, opts = {}) {
       let text = esc(cellDisplay(app, sh, sr, sc)).replace(/\n/g, '<br>');
       if (cell?.link) text = `<a href="${esc(cell.link)}">${text}</a>`;
       if (v instanceof Special && v.kind === 'image') text = `<img src="${esc(v.data.url)}" style="max-width:100%;max-height:100%">`;
+      const fl = imgs.get(key(r, c));
+      if (fl) {
+        if (!css.some(x => x.startsWith('overflow:visible'))) css.push('position:relative;overflow:visible');
+        for (const d of fl) text += `<img src="${esc(d.src)}" alt="" style="position:absolute;left:${+d.x.toFixed(2)}px;top:${+d.y.toFixed(2)}px;width:${+d.w.toFixed(2)}px;height:${+d.h.toFixed(2)}px;max-width:none;max-height:none;z-index:${3 + d.z};pointer-events:none">`;
+      }
       html += `<td${span} style="${css.join(';')}">${text}</td>`;
     }
     html += '</tr>';

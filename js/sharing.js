@@ -14,10 +14,13 @@ function norm(j) {
   if (!j || !j.sheets) return { order: [], sheets: {} };
   const styles = j.styles || [{}], sheets = {};
   for (const s of j.sheets) {
-    const { cells, id, ...meta } = s;
+    const { cells, id, images, ...meta } = s;
     const cm = {};
     for (const [k, v, f, si, note, link] of cells || []) cm[k] = { v: v ?? null, f: f ?? null, st: JSON.stringify(styles[si] || {}), note: note ?? null, link: link ?? null };
-    sheets[id] = { ...meta, cells: cm };
+    // floating images keyed by id: two people adding / moving different signatures at the same time both keep theirs
+    const im = {};
+    (images || []).forEach((d, z) => { if (d && d.id) im[d.id] = { ...d, z }; });
+    sheets[id] = { ...meta, images: im, cells: cm };
   }
   return { name: j.name, settings: j.settings, names: j.names || [], order: j.sheets.map(s => s.id), sheets };
 }
@@ -27,7 +30,8 @@ function denorm(o) {
   const order = (o.order || []).filter(id => o.sheets[id]);
   for (const id of ids) if (!order.includes(id)) order.push(id);
   const sheets = order.map(id => {
-    const { cells, ...meta } = o.sheets[id];
+    const { cells, images, ...meta } = o.sheets[id];
+    const imgs = Object.values(images || {}).filter(d => d && d.src).sort((a, b) => (a.z ?? 0) - (b.z ?? 0)).map(({ z, ...d }) => d);
     const arr = [];
     for (const [k, c] of Object.entries(cells || {})) {
       let si = ix.get(c.st);
@@ -36,7 +40,7 @@ function denorm(o) {
       if (c.note || c.link) row.push(c.note, c.link);
       arr.push(row);
     }
-    return { id, ...meta, cells: arr };
+    return { id, ...meta, images: imgs, cells: arr };
   });
   return { app: 'amatu-sheets', v: 1, name: o.name, settings: o.settings, names: o.names || [], styles, sheets };
 }
@@ -53,7 +57,7 @@ export function cellBlock(app, sh, r, c) {
   return null;
 }
 const LAYOUT_ONLY = ['rowH', 'manualH', 'filteredR'];
-const metaChanged = (a, b) => { const x = { ...a }, y = { ...b }; for (const k of LAYOUT_ONLY) { delete x[k]; delete y[k]; } return !eq(x, y); };
+const metaChanged = (a, b, skip = []) => { const x = { ...a }, y = { ...b }; for (const k of [...LAYOUT_ONLY, ...skip]) { delete x[k]; delete y[k]; } return !eq(x, y); };
 // Checks the history entry of the transaction that just ran. Returns null when allowed, else the reason.
 // app._permit = true lets the protection commands themselves through.
 export function checkEntry(app, e) {
@@ -65,7 +69,8 @@ export function checkEntry(app, e) {
   }
   if (e.wb) for (const id of e.wb.order) { const sh = wb.sheetById(id); const was = e.full.get(id); if (!sh && was?.protect) return 'Sheet yang dikunci tidak dapat dihapus.'; }
   for (const id of e.full.keys()) { const sh = wb.sheetById(id); if (sh?.protect) return 'Sheet ini dikunci. Struktur baris/kolom tidak dapat diubah.'; }
-  for (const [id, m] of e.meta) { const sh = wb.sheetById(id); if (sh?.protect && metaChanged(m, sh.metaSnapshot())) return 'Sheet ini dikunci. Pengaturan sheet tidak dapat diubah.'; }
+  // a locked sheet protects its cells and settings; signatures over the cells may still be added / moved (signing a finished sheet)
+  for (const [id, m] of e.meta) { const sh = wb.sheetById(id); if (sh?.protect && metaChanged(m, sh.metaSnapshot(), ['images'])) return 'Sheet ini dikunci. Pengaturan sheet tidak dapat diubah.'; }
   for (const [id, cm] of e.cells) {
     const sh = wb.sheetById(id); if (!sh) continue;
     for (const [k, snap] of cm) {
