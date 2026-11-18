@@ -93,9 +93,11 @@ export class FloatImages {
   place(b, d) {
     const g = this.app.grid, z = g.z, sh = this.sh, geo = g.geo();
     const r = Math.min(d.anchor.r, sh.rows - 1), c = Math.min(d.anchor.c, sh.cols - 1);
-    const x = g.X(c) + d.dx, y = g.Y(r) + d.dy;
-    Object.assign(b.el.style, { left: x * z + 'px', top: y * z + 'px', width: d.w * z + 'px', height: d.h * z + 'px' });
+    const p = g.boxAt(b.el, r, c, d.dx, d.dy);
+    Object.assign(b.el.style, { left: p.x + 'px', top: p.y + 'px', width: d.w * z + 'px', height: d.h * z + 'px' });
+    if (!p.clip) { b.el.style.clipPath = ''; return; }   // layar sentuh: panel grid sendiri yang memotong
     // gambar di area yang bergulir tidak boleh menutupi baris/kolom yang dibekukan
+    const x = g.X(c) + d.dx, y = g.Y(r) + d.dy;
     const top = r >= sh.freezeR ? HH + g.fh() : HH, left = c >= sh.freezeC ? geo.hw + g.fw() : geo.hw;
     const ct = Math.max(0, top - y), cl = Math.max(0, left - x);
     b.el.style.clipPath = ct || cl ? `inset(${ct * z}px 0 0 ${cl * z}px)` : '';

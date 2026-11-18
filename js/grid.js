@@ -49,7 +49,10 @@ export class Grid {
     this.dash = 0;
     this.colors = {};
     this.raf = 0;
+    this.full = true;      // next draw must repaint (not only follow the scroll)
+    this.layered = false;  // touch renderer, see setLayered()
     this.bind();
+    if (this.touchUI) this.setLayered(true, true);
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
   }
@@ -73,6 +76,11 @@ export class Grid {
     const r = this.host.getBoundingClientRect();
     this.W = r.width; this.H = r.height;
     this.dpr = window.devicePixelRatio || 1;
+    if (this.layered) {
+      this.sizeLayers();
+      if (this.app.wb) this.drawNow(); else this.render();
+      return;
+    }
     const w = Math.max(1, Math.round(r.width * this.dpr)), h = Math.max(1, Math.round(r.height * this.dpr));
     this.canvas.style.width = r.width + 'px';
     this.canvas.style.height = r.height + 'px';
@@ -100,13 +108,15 @@ export class Grid {
     const g = this.g, sh = this.sh, z = this.z;
     const w = (g.hw + g.colX[sh.cols]) * z + 40;
     const h = (HH + g.rowY[sh.rows]) * z + 64;
+    this.SW = w; this.SH = h;
     this.spacer.style.width = w + 'px';
     this.spacer.style.height = h + 'px';
     this.addRows.style.top = ((HH + g.rowY[sh.rows]) * z + 12) + 'px';
     this.addRows.style.left = (g.hw * z + 8 + this.scroller.scrollLeft) + 'px';
   }
-  get sx() { return this.scroller.scrollLeft / this.z; }
-  get sy() { return this.scroller.scrollTop / this.z; }
+  // While a layer of the touch renderer is painted, sx/sy are that layer's origin instead of the scroll position.
+  get sx() { return this._osx ?? this.scroller.scrollLeft / this.z; }
+  get sy() { return this._osy ?? this.scroller.scrollTop / this.z; }
   get vw() { return this.scroller.clientWidth / this.z; }
   get vh() { return this.scroller.clientHeight / this.z; }
   fw() { return this.geo().colX[this.sh.freezeC]; }
@@ -127,14 +137,14 @@ export class Grid {
   }
   colAt(x) {
     const g = this.geo(), sh = this.sh, fC = sh.freezeC;
-    if (fC && x < g.hw + g.colX[fC]) return Grid.bs(g.colX, Math.max(0, x - g.hw), 0, fC);
+    if (fC && this._osx === undefined && x < g.hw + g.colX[fC]) return Grid.bs(g.colX, Math.max(0, x - g.hw), 0, fC);
     const lx = x - g.hw + this.sx;
     const c = Grid.bs(g.colX, lx, fC, sh.cols);
     return Math.min(c, sh.cols - 1);
   }
   rowAt(y) {
     const g = this.geo(), sh = this.sh, fR = sh.freezeR;
-    if (fR && y < HH + g.rowY[fR]) return Grid.bs(g.rowY, Math.max(0, y - HH), 0, fR);
+    if (fR && this._osy === undefined && y < HH + g.rowY[fR]) return Grid.bs(g.rowY, Math.max(0, y - HH), 0, fR);
     const ly = y - HH + this.sy;
     return Math.min(Grid.bs(g.rowY, ly, fR, sh.rows), sh.rows - 1);
   }
@@ -260,11 +270,13 @@ export class Grid {
   }
 
   // ---------- rendering ----------
-  render() {
+  // why 'scroll': only the view moved (the touch renderer may not need to repaint at all)
+  render(why) {
+    if (why !== 'scroll') this.full = true;
     if (this.raf) return;
     this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
   }
-  drawNow() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } this.draw(); }
+  drawNow() { this.full = true; if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } this.draw(); }
 
   measure(font, text) {
     const k = font + '\u0001' + text;
@@ -303,6 +315,8 @@ export class Grid {
   draw() {
     const ctx = this.ctx, sh = this.sh;
     if (!sh || !this.W) return;
+    if (this.layered) { this.drawLayered(); return; }
+    this.full = false;
     const g = this.geo();
     this.syncSpacer();
     const z = this.z, S = this.dpr * z;
@@ -341,6 +355,174 @@ export class Grid {
     this.placeEditor();
     this.app.charts?.position();
     this.app.images?.position();
+  }
+
+  // ---------- touch screens: panes the browser scrolls by itself ----------
+  // iOS Safari passes the scroll position to the page only ~30 times a second (iOS 27 simulator: the canvas
+  // jumped 22 pt every second frame while the finger and the scroll bar moved every frame), so a canvas that is
+  // redrawn on scroll events judders. Here the cells are painted on a canvas INSIDE the scrolled content, larger
+  // than the view, and the headers / frozen panes on position: sticky strips: the browser moves all of them at
+  // full frame rate, and the page repaints only when the view nears an edge of what was painted or something
+  // changed. Floating images and charts sit in the same panes (boxAt). Mouse-only screens keep the one canvas.
+  setLayered(on, quiet = false) {
+    on = !!on;
+    if (on === this.layered) return;
+    this.layered = on;
+    if (on && !this.ly) this.initLayers();
+    this.host.classList.toggle('layered', on);
+    if (on) { this.canvas.width = this.canvas.height = 1; }   // not shown: free its memory
+    else for (const k of ['cells', 'top', 'left', 'corner']) { const l = this.ly[k]; l.c.width = l.c.height = 1; l.bw = l.bh = 0; }
+    if (quiet) return;
+    this.resize();
+    this.app.charts?.position();
+    this.app.images?.position();
+  }
+  initLayers() {
+    const pane = (cls, alpha) => {
+      const c = el('canvas.gl-c'), boxes = el('div.gl-boxes');
+      return { wrap: el('div.gl.' + cls, c, boxes), c, ctx: c.getContext('2d', { alpha }), boxes, bw: 0, bh: 0 };
+    };
+    const L = this.ly = {
+      cells: pane('gl-cells', false), top: pane('gl-top', true), left: pane('gl-left', true), corner: pane('gl-corner', true),
+      main: el('div.gl.gl-main'),   // floating boxes anchored in the scrolling cells (the cells pane clips to what is painted)
+      ox: -1, oy: -1, vx: 0, vy: 0, pl: 0, pt: 0, tv: 0, mx: 0, my: 0, cw: 0, ch: 0,
+    };
+    L.cells.boxes.remove();
+    L.cells.boxes = L.main;
+    this.spacer.prepend(L.cells.wrap, L.main, L.top.wrap, L.left.wrap, L.corner.wrap);
+  }
+  // Painted area = view + margins, capped: iOS Safari limits canvas memory.
+  sizeLayers() {
+    const L = this.ly, sc = this.scroller, d2 = this.dpr * this.dpr;
+    const Wv = Math.ceil(sc.clientWidth || this.W), Hv = Math.ceil(sc.clientHeight || this.H);
+    let mx = Math.max(64, Wv * 0.3), my = Math.max(160, Hv * 0.6);
+    while ((Wv + 2 * mx) * (Hv + 2 * my) * d2 > 8e6 && my > 48) { mx *= 0.85; my *= 0.85; }
+    L.mx = Math.round(mx); L.my = Math.round(my);
+    L.cw = Wv + 2 * L.mx; L.ch = Hv + 2 * L.my;
+    L.ox = -1;
+  }
+  lySize(l, w, h) {
+    const bw = Math.max(1, Math.round(w * this.dpr)), bh = Math.max(1, Math.round(h * this.dpr));
+    if (l.bw !== bw || l.bh !== bh) { l.c.width = bw; l.c.height = bh; l.bw = bw; l.bh = bh; }
+    l.c.style.width = w + 'px'; l.c.style.height = h + 'px';
+  }
+  viewRange() {
+    const g = this.geo(), W = this.W / this.z, H = this.H / this.z;
+    return { r0: this.rowAt(HH + this.fh() + 0.01), r1: this.rowAt(H), c0: this.colAt(g.hw + this.fw() + 0.01), c1: this.colAt(W) };
+  }
+  drawLayered() {
+    const L = this.ly, sc = this.scroller, full = this.full;
+    if (!L.cw) this.sizeLayers();
+    this.geo();
+    this.visible = this.viewRange();
+    if (full || this.stale(sc.scrollLeft, sc.scrollTop)) this.paintLayers(sc.scrollLeft, sc.scrollTop);
+    // a scroll alone moves nothing else: the focused (hidden) cell input stays put unless a cell is being edited
+    if (full || this.edit) this.placeEditor();
+    if (full) { this.app.charts?.position(); this.app.images?.position(); }
+  }
+  // Is the view (soon) past the painted area? Faster scrolling asks for more room ahead.
+  stale(sl, st) {
+    const L = this.ly, sc = this.scroller;
+    if (L.ox < 0) return true;
+    const moving = performance.now() - L.tv < 200;
+    const tx = L.mx * 0.3 + (moving ? Math.abs(L.vx) * 2.5 : 0), ty = L.my * 0.3 + (moving ? Math.abs(L.vy) * 2.5 : 0);
+    const room = (o, size, s, view, total) => Math.min(o > 0 ? s - o : Infinity, o + size < total ? o + size - s - view : Infinity);
+    return room(L.ox, L.cw, sl, sc.clientWidth, this.SW) < tx || room(L.oy, L.ch, st, sc.clientHeight, this.SH) < ty;
+  }
+  paintLayers(sl, st) {
+    this.full = false;
+    const L = this.ly, sh = this.sh, g = this.geo(), z = this.z, S = this.dpr * z, C = this.colors;
+    this.S = S;
+    this.syncSpacer();
+    const SW = this.SW, SH = this.SH, fC = sh.freezeC, fR = sh.freezeR, fw = this.fw(), fh = this.fh();
+    // more margin on the side the view is heading to
+    const moving = performance.now() - L.tv < 200;
+    const lead = (v, m) => (!moving || !v ? m : v > 0 ? m * 0.4 : m * 1.6);
+    const ox = Math.round(Math.max(0, Math.min(sl - lead(L.vx, L.mx), SW - L.cw)));
+    const oy = Math.round(Math.max(0, Math.min(st - lead(L.vy, L.my), SH - L.ch)));
+    L.ox = ox; L.oy = oy;
+    const cw = L.cw, ch = L.ch;
+    const th = Math.ceil((HH + fh) * z) + 3, lw = Math.ceil((g.hw + fw) * z) + 3;   // strips: headers + frozen panes + freeze bar
+    this.lySize(L.cells, cw, ch); this.lySize(L.top, cw, th); this.lySize(L.left, lw, ch); this.lySize(L.corner, lw, th);
+    const px = v => v + 'px';
+    Object.assign(L.cells.wrap.style, { left: px(ox), top: px(oy), width: px(Math.max(0, Math.min(cw, SW - ox))), height: px(Math.max(0, Math.min(ch, SH - oy))) });
+    Object.assign(L.main.style, { width: px(SW), height: px(SH) });
+    Object.assign(L.top.wrap.style, { height: px(th), marginBottom: px(-th) });
+    L.top.c.style.left = px(ox);
+    Object.assign(L.left.wrap.style, { width: px(lw), height: px(SH), marginBottom: px(-SH) });
+    L.left.c.style.top = px(oy);
+    Object.assign(L.corner.wrap.style, { width: px(lw), height: px(th), marginBottom: px(-th) });
+    // what the canvases cover, in sheet units
+    const x0 = ox / z, y0 = oy / z, W = cw / z, H = ch / z, TH = th / z, LW = lw / z;
+    const c0 = Grid.bs(g.colX, x0 - g.hw, fC, sh.cols), c1 = Math.min(sh.cols - 1, Grid.bs(g.colX, x0 + W - g.hw, fC, sh.cols));
+    const r0 = Grid.bs(g.rowY, y0 - HH, fR, sh.rows), r1 = Math.min(sh.rows - 1, Grid.bs(g.rowY, y0 + H - HH, fR, sh.rows));
+    const vr = (sl + this.scroller.clientWidth) / z - x0;   // right edge of the view, for labels
+    const hs = this.hdrState(), d = this.drag, saved = this.ctx;
+    // A pane's own origin replaces the scroll position on the axis it scrolls along; on a fixed axis the view
+    // position stays (frozen rows/columns never scroll, and anything else there is clipped away).
+    const pane = (l, ax, ay, w, h, clear) => {
+      this._osx = ax ? x0 : undefined; this._osy = ay ? y0 : undefined;
+      const ctx = this.ctx = l.ctx;
+      ctx.setTransform(S, 0, 0, S, 0, 0);
+      if (clear) ctx.clearRect(0, 0, w, h);
+      return ctx;
+    };
+    const quad = q => { const ctx = this.ctx; ctx.save(); ctx.beginPath(); ctx.rect(q.x, q.y, q.w, q.h); ctx.clip(); this.drawCells(q); this.drawOverlays(q); ctx.restore(); };
+    try {
+      // scrolling cells
+      let ctx = pane(L.cells, 1, 1, W, H, false);
+      ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+      quad({ r0, r1, c0, c1, x: 0, y: 0, w: W, h: H, cs: fC, vr });
+      // top strip: column headers + frozen rows (scrolls sideways only)
+      ctx = pane(L.top, 1, 0, W, TH, true);
+      this.hdrCols(hs, c0, c1, 0, W);
+      if (fR) { ctx.fillStyle = C.bg; ctx.fillRect(0, HH, W, fh); quad({ r0: 0, r1: fR - 1, c0, c1, x: 0, y: HH, w: W, h: fh, cs: fC, vr }); }
+      // left strip: row headers + frozen columns (scrolls up/down only)
+      ctx = pane(L.left, 0, 1, LW, H, true);
+      this.hdrRows(hs, r0, r1, 0, H);
+      if (fC) { ctx.fillStyle = C.bg; ctx.fillRect(g.hw, 0, fw, H); quad({ r0, r1, c0: 0, c1: fC - 1, x: g.hw, y: 0, w: fw, h: H, cs: 0 }); }
+      // corner (never scrolls)
+      ctx = pane(L.corner, 0, 0, LW, TH, true);
+      if (fC) this.hdrCols(hs, 0, fC - 1, g.hw, g.hw + fw);
+      if (fR) this.hdrRows(hs, 0, fR - 1, HH, HH + fh);
+      if (fR && fC) { ctx.fillStyle = C.bg; ctx.fillRect(g.hw, HH, fw, fh); quad({ r0: 0, r1: fR - 1, c0: 0, c1: fC - 1, x: g.hw, y: HH, w: fw, h: fh, cs: 0 }); }
+      this.hdrCorner();
+      // freeze bars live on the sticky strips (so they stay put), or the grips to drag them out
+      const dragR = d?.mode === 'freezeR', dragC = d?.mode === 'freezeC';
+      L.top.ctx.fillStyle = L.left.ctx.fillStyle = ctx.fillStyle = C.freeze;
+      if (fR && !dragR) { L.top.ctx.fillRect(0, HH + fh - 1.5, W, 3); ctx.fillRect(0, HH + fh - 1.5, LW, 3); }
+      else if (!dragR) ctx.fillRect(0, HH - 1, g.hw, 3);
+      if (fC && !dragC) { L.left.ctx.fillRect(g.hw + fw - 1.5, 0, 3, H); ctx.fillRect(g.hw + fw - 1.5, 0, 3, TH); }
+      else if (!dragC) ctx.fillRect(g.hw - 1, 0, 3, HH);
+      // lines of a mouse drag are in view coordinates and cross every pane
+      if (d && (dragR || dragC || d.mode === 'colresize' || d.mode === 'rowresize')) {
+        const horiz = dragR || d.mode === 'rowresize', t = dragR || dragC ? 3 : 2, sxl = sl / z, syl = st / z;
+        for (const [l, ax, ay, w, h] of [[L.cells, 1, 1, W, H], [L.top, 1, 0, W, TH], [L.left, 0, 1, LW, H], [L.corner, 0, 0, LW, TH]]) {
+          const c = l.ctx;
+          c.fillStyle = dragR || dragC ? C.freeze : C.accent;
+          if (horiz) c.fillRect(0, (ay ? d.y + syl - y0 : d.y) - t / 2, w, t);
+          else c.fillRect((ax ? d.x + sxl - x0 : d.x) - t / 2, 0, t, h);
+        }
+      }
+    } finally {
+      this.ctx = saved;
+      this._osx = this._osy = undefined;
+    }
+  }
+
+  // Where a floating box (chart, image) anchored at cell (r, c) goes, in CSS px of its parent. One canvas: view
+  // coordinates in the overlay layer. Touch panes: sheet coordinates in the pane of the anchor, so the box rides
+  // along with the cells (the panes clip it: no clip-path needed).
+  boxAt(elm, r, c, dx, dy) {
+    const z = this.z;
+    if (!this.layered) {
+      if (elm.parentNode !== this.layer) this.layer.append(elm);
+      return { x: (this.X(c) + dx) * z, y: (this.Y(r) + dy) * z, clip: true };
+    }
+    const sh = this.sh, g = this.geo(), L = this.ly;
+    const host = r < sh.freezeR ? (c < sh.freezeC ? L.corner.boxes : L.top.boxes) : (c < sh.freezeC ? L.left.boxes : L.main);
+    if (elm.parentNode !== host) host.append(elm);
+    return { x: (g.hw + g.colX[c] + dx) * z, y: (HH + g.rowY[r] + dy) * z, clip: false };
   }
 
   px(v) { return (Math.round(v * this.S) + 0.5) / this.S; }
@@ -825,9 +1007,9 @@ export class Grid {
       if (b < q.r0 || b > q.r1 + 1) return;
       const y = this.Y(b);
       line(x1, y, x2, y, L.manualR.has(b));
-      const t = 'Halaman ' + (i + 2), tw = ctx.measureText(t).width + 10;
-      ctx.setLineDash([]); ctx.fillStyle = col; this.roundRect(x2 - tw - 4, y + 3, tw, 15, 7); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.fillText(t, x2 - tw + 1, y + 14);
+      const t = 'Halaman ' + (i + 2), tw = ctx.measureText(t).width + 10, lx = Math.min(x2, q.vr ?? Infinity);   // label at the right of the view
+      ctx.setLineDash([]); ctx.fillStyle = col; this.roundRect(lx - tw - 4, y + 3, tw, 15, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillText(t, lx - tw + 1, y + 14);
     });
     for (const c of L.colBreaks) {
       if (c < q.c0 || c > q.c1 + 1) continue;
@@ -961,68 +1143,68 @@ export class Grid {
   }
 
   drawHeaders(W, H) {
-    const ctx = this.ctx, sh = this.sh, g = this.geo(), C = this.colors;
-    const fw = this.fw(), fh = this.fh();
-    const s = this.sel;
-    const selCols = new Set(), selRows = new Set(), fullCols = new Set(), fullRows = new Set();
-    for (const r of s.ranges) {
-      const fullC = r.r1 === 0 && r.r2 >= sh.rows - 1, fullR = r.c1 === 0 && r.c2 >= sh.cols - 1;
-      for (let c = Math.max(r.c1, 0); c <= Math.min(r.c2, sh.cols - 1) && c <= this.visible.c1 + 1; c++) { selCols.add(c); if (fullC) fullCols.add(c); }
-      for (let rr = Math.max(r.r1, 0); rr <= Math.min(r.r2, sh.rows - 1) && rr <= this.visible.r1 + 1; rr++) { selRows.add(rr); if (fullR) fullRows.add(rr); }
-    }
-    ctx.font = `500 11px Inter, ${FALLBACK}`;
+    const sh = this.sh, g = this.geo(), fw = this.fw(), fh = this.fh(), v = this.visible, hs = this.hdrState();
+    this.hdrCols(hs, v.c0, v.c1, g.hw + fw, W);
+    if (sh.freezeC) this.hdrCols(hs, 0, sh.freezeC - 1, g.hw, g.hw + fw);
+    this.hdrRows(hs, v.r0, v.r1, HH + fh, H);
+    if (sh.freezeR) this.hdrRows(hs, 0, sh.freezeR - 1, HH, HH + fh);
+    this.hdrCorner();
+  }
+  // header of a column / row: 0 plain, 1 in the selection, 2 whole column / row selected
+  hdrState() {
+    const sh = this.sh, rs = this.sel.ranges.map(g => ({ g, fc: g.r1 === 0 && g.r2 >= sh.rows - 1, fr: g.c1 === 0 && g.c2 >= sh.cols - 1 }));
+    return {
+      col: c => { let k = 0; for (const x of rs) if (c >= x.g.c1 && c <= x.g.c2) { if (x.fc) return 2; k = 1; } return k; },
+      row: r => { let k = 0; for (const x of rs) if (r >= x.g.r1 && r <= x.g.r2) { if (x.fr) return 2; k = 1; } return k; },
+    };
+  }
+  hdrCols(hs, c0, c1, x0, x1) {
+    const ctx = this.ctx, C = this.colors;
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, HH); ctx.clip();
+    ctx.fillStyle = C.hdr; ctx.fillRect(x0, 0, x1 - x0, HH);
+    ctx.strokeStyle = C.hdrLine; ctx.lineWidth = 1 / this.S;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const drawCols = (c0, c1, x0, x1) => {
-      ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, HH); ctx.clip();
-      ctx.fillStyle = C.hdr; ctx.fillRect(x0, 0, x1 - x0, HH);
-      ctx.strokeStyle = C.hdrLine; ctx.lineWidth = 1 / this.S;
-      for (let c = c0; c <= c1; c++) {
-        const w = this.cw(c); if (!w) {
-          // hidden column marker
-          const x = this.X(c); ctx.fillStyle = C.hdrText; ctx.fillRect(x - 1.5, 4, 3, HH - 8); continue;
-        }
-        const x = this.X(c);
-        if (fullCols.has(c)) { ctx.fillStyle = C.hdrAll; ctx.fillRect(x, 0, w, HH); }
-        else if (selCols.has(c)) { ctx.fillStyle = C.hdrSel; ctx.fillRect(x, 0, w, HH); }
-        ctx.fillStyle = fullCols.has(c) ? '#fff' : selCols.has(c) ? C.hdrSelText : C.hdrText;
-        ctx.font = (selCols.has(c) ? '600' : '500') + ` 11px Inter, ${FALLBACK}`;
-        ctx.fillText(colName(c), x + w / 2, HH / 2 + 0.5);
-        ctx.beginPath(); ctx.moveTo(this.px(x + w), 0); ctx.lineTo(this.px(x + w), HH); ctx.stroke();
-      }
-      ctx.strokeStyle = C.hdrEdge;
-      ctx.beginPath(); ctx.moveTo(x0, this.px(HH)); ctx.lineTo(x1, this.px(HH)); ctx.stroke();
-      ctx.restore();
-    };
-    const drawRows = (r0, r1, y0, y1) => {
-      ctx.save(); ctx.beginPath(); ctx.rect(0, y0, g.hw, y1 - y0); ctx.clip();
-      ctx.fillStyle = C.hdr; ctx.fillRect(0, y0, g.hw, y1 - y0);
-      ctx.strokeStyle = C.hdrLine; ctx.lineWidth = 1 / this.S;
-      for (let r = r0; r <= r1; r++) {
-        const h = this.rh(r);
-        if (!h) { const y = this.Y(r); ctx.fillStyle = C.hdrText; ctx.fillRect(4, y - 1.5, g.hw - 8, 3); continue; }
-        const y = this.Y(r);
-        if (fullRows.has(r)) { ctx.fillStyle = C.hdrAll; ctx.fillRect(0, y, g.hw, h); }
-        else if (selRows.has(r)) { ctx.fillStyle = C.hdrSel; ctx.fillRect(0, y, g.hw, h); }
-        ctx.fillStyle = fullRows.has(r) ? '#fff' : selRows.has(r) ? C.hdrSelText : C.hdrText;
-        ctx.font = (selRows.has(r) ? '600' : '500') + ` 11px Inter, ${FALLBACK}`;
-        if (h >= 9) ctx.fillText(String(r + 1), g.hw / 2, y + h / 2 + 0.5);
-        ctx.beginPath(); ctx.moveTo(0, this.px(y + h)); ctx.lineTo(g.hw, this.px(y + h)); ctx.stroke();
-      }
-      ctx.strokeStyle = C.hdrEdge;
-      ctx.beginPath(); ctx.moveTo(this.px(g.hw), y0); ctx.lineTo(this.px(g.hw), y1); ctx.stroke();
-      ctx.restore();
-    };
-    drawCols(this.visible.c0, this.visible.c1, g.hw + fw, W);
-    if (sh.freezeC) drawCols(0, sh.freezeC - 1, g.hw, g.hw + fw);
-    drawRows(this.visible.r0, this.visible.r1, HH + fh, H);
-    if (sh.freezeR) drawRows(0, sh.freezeR - 1, HH, HH + fh);
-    // corner
+    for (let c = c0; c <= c1; c++) {
+      const w = this.cw(c), x = this.X(c);
+      if (!w) { ctx.fillStyle = C.hdrText; ctx.fillRect(x - 1.5, 4, 3, HH - 8); continue; }   // hidden column marker
+      const k = hs.col(c);
+      if (k) { ctx.fillStyle = k === 2 ? C.hdrAll : C.hdrSel; ctx.fillRect(x, 0, w, HH); }
+      ctx.fillStyle = k === 2 ? '#fff' : k ? C.hdrSelText : C.hdrText;
+      ctx.font = (k ? '600' : '500') + ` 11px Inter, ${FALLBACK}`;
+      ctx.fillText(colName(c), x + w / 2, HH / 2 + 0.5);
+      ctx.beginPath(); ctx.moveTo(this.px(x + w), 0); ctx.lineTo(this.px(x + w), HH); ctx.stroke();
+    }
+    ctx.strokeStyle = C.hdrEdge;
+    ctx.beginPath(); ctx.moveTo(x0, this.px(HH)); ctx.lineTo(x1, this.px(HH)); ctx.stroke();
+    ctx.restore();
+  }
+  hdrRows(hs, r0, r1, y0, y1) {
+    const ctx = this.ctx, C = this.colors, g = this.geo();
+    ctx.save(); ctx.beginPath(); ctx.rect(0, y0, g.hw, y1 - y0); ctx.clip();
+    ctx.fillStyle = C.hdr; ctx.fillRect(0, y0, g.hw, y1 - y0);
+    ctx.strokeStyle = C.hdrLine; ctx.lineWidth = 1 / this.S;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let r = r0; r <= r1; r++) {
+      const h = this.rh(r), y = this.Y(r);
+      if (!h) { ctx.fillStyle = C.hdrText; ctx.fillRect(4, y - 1.5, g.hw - 8, 3); continue; }
+      const k = hs.row(r);
+      if (k) { ctx.fillStyle = k === 2 ? C.hdrAll : C.hdrSel; ctx.fillRect(0, y, g.hw, h); }
+      ctx.fillStyle = k === 2 ? '#fff' : k ? C.hdrSelText : C.hdrText;
+      ctx.font = (k ? '600' : '500') + ` 11px Inter, ${FALLBACK}`;
+      if (h >= 9) ctx.fillText(String(r + 1), g.hw / 2, y + h / 2 + 0.5);
+      ctx.beginPath(); ctx.moveTo(0, this.px(y + h)); ctx.lineTo(g.hw, this.px(y + h)); ctx.stroke();
+    }
+    ctx.strokeStyle = C.hdrEdge;
+    ctx.beginPath(); ctx.moveTo(this.px(g.hw), y0); ctx.lineTo(this.px(g.hw), y1); ctx.stroke();
+    ctx.restore();
+  }
+  hdrCorner() {
+    const ctx = this.ctx, C = this.colors, g = this.geo();
     ctx.fillStyle = C.hdr; ctx.fillRect(0, 0, g.hw, HH);
     ctx.strokeStyle = C.hdrEdge; ctx.lineWidth = 1 / this.S;
     ctx.beginPath(); ctx.moveTo(this.px(g.hw), 0); ctx.lineTo(this.px(g.hw), HH); ctx.moveTo(0, this.px(HH)); ctx.lineTo(g.hw, this.px(HH)); ctx.stroke();
     ctx.fillStyle = C.hdrLine;
     ctx.beginPath(); ctx.moveTo(g.hw - 4, HH - 13); ctx.lineTo(g.hw - 4, HH - 4); ctx.lineTo(g.hw - 13, HH - 4); ctx.closePath(); ctx.fill();
-    ctx.textAlign = 'left';
   }
 
   // ---------- hit testing ----------
@@ -1087,7 +1269,13 @@ export class Grid {
   // ---------- input binding ----------
   bind() {
     const sc = this.scroller;
-    sc.addEventListener('scroll', () => { this.render(); this.hideTip(); this.addRows.style.left = (this.geo().hw * this.z + 8 + sc.scrollLeft) + 'px'; });
+    sc.addEventListener('scroll', () => {
+      if (this.layered) {   // scroll speed per event: the touch panes keep more painted room ahead of a fast swipe
+        const L = this.ly, x = sc.scrollLeft, y = sc.scrollTop;
+        L.vx = x - L.pl; L.vy = y - L.pt; L.pl = x; L.pt = y; L.tv = performance.now();
+      }
+      this.render('scroll'); this.hideTip(); this.addRows.style.left = (this.geo().hw * this.z + 8 + sc.scrollLeft) + 'px';
+    }, { passive: true });
     sc.addEventListener('pointerdown', e => this.onDown(e));
     sc.addEventListener('pointermove', e => this.onMove(e));
     sc.addEventListener('pointerup', e => this.onUp(e));
@@ -1124,6 +1312,7 @@ export class Grid {
   // (a hardware keyboard still types into the focused input).
   setTouch(on) {
     if (on !== this.touchUI) { this.touchUI = on; this.render(); }
+    if (on && !this.layered) this.setLayered(true);   // a touch screen next to a mouse: smooth panes from the first finger on
     if (!on) this.input.removeAttribute('inputmode');
     else if (!this.input.inputMode) this.input.inputMode = 'none';
   }
@@ -1231,6 +1420,7 @@ export class Grid {
           // second tap on the selected cell opens it for typing (and only then the keyboard)
           const g = this.range;
           if (touch && h.area === 'cell' && was && was.n === 1 && was.r === this.sel.r && was.c === this.sel.c && was.r1 === g.r1 && was.c1 === g.c1 && was.r2 === g.r2 && was.c2 === g.c2) {
+            this.scrollTo(this.sel.r, this.sel.c);   // a cell half under the frozen panes comes out whole for typing
             this.kbShow();
             this.startEdit(null, 'edit');
             return;

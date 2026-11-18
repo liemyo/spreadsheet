@@ -8,7 +8,7 @@ import * as ops from './ops.js';
 import { FErr } from './formula/core.js';
 import { FormulaBar } from './ui/fx.js';
 import { openMenu, popup, closeMenus, toast, dialog, promptDlg, confirmDlg, initTooltips, alertDlg } from './ui/ui.js';
-import { buildMenubar, cellContextMenu, colContextMenu, rowContextMenu, tabContextMenu } from './ui/menus.js';
+import { buildMenubar, menuButton, cellContextMenu, colContextMenu, rowContextMenu, tabContextMenu } from './ui/menus.js';
 import { buildToolbar } from './ui/toolbar.js';
 import * as D from './ui/dialogs.js';
 import { Sidebar } from './ui/sidebar.js';
@@ -76,6 +76,10 @@ export class App {
     this.bindClipboard();
     this.grid.readTheme();
     this.saveLater = debounce(() => this.save(), 700);
+    // iOS Safari: the first content shown in the full-screen popup layer costs ~1.2 s once (iOS 27 simulator: the
+    // first menu tap froze the page that long, every later menu took 4–16 ms). A 1-px resident pays it now,
+    // while the loader is up and the workbook is still being read.
+    if (this.grid.touchUI) document.getElementById('popups').append(el('i.warm', { 'aria-hidden': 'true' }));
     await store.ready();
     const params = new URLSearchParams(location.search);
     let wb = null;
@@ -334,7 +338,7 @@ export class App {
     host.innerHTML = '';
     host.classList.remove('show');
     const g = this.grid;
-    if (g.edit) return;
+    if (g.edit || !this.sheet) return;   // a resize can come before the workbook is loaded
     const cell = this.sheet.get(g.sel.r, g.sel.c);
     const link = cell && (cell.link || cell.hl || (typeof cell.v === 'string' && /^(https?:\/\/|www\.)\S+$/i.test(cell.v) ? cell.v : null));
     if (!link) return;
@@ -438,9 +442,18 @@ export class App {
     this.sheet.view = { sel: JSON.parse(JSON.stringify(g.sel)), sx: g.scroller.scrollLeft, sy: g.scroller.scrollTop };
   }
 
+  // sheet list for ≡ (bottom bar) and the sheet button of the landscape top bar
+  sheetItems() {
+    return this.wb.sheets.map((sh, i) => ({
+      label: sh.name, icon: sh.hidden ? 'visibility_off' : sh.protect ? 'lock' : null, checked: () => i === this.wb.active,
+      run: () => { if (sh.hidden) this.cmd('unhideSheet', sh); this.switchSheet(i); },
+    }));
+  }
   renderTabs() {
     const host = document.getElementById('tabs');
     if (!host || !this.wb) return;
+    const sb = document.querySelector('#btn-sheet .sheet-btn-name');
+    if (sb) sb.textContent = this.sheet?.name || '';
     host.innerHTML = '';
     this.wb.sheets.forEach((sh, i) => {
       if (sh.hidden) return;
@@ -880,10 +893,25 @@ export class App {
     t.addEventListener('keydown', e => { if (e.key === 'Enter') t.blur(); if (e.key === 'Escape') { t.value = this.wb.name; t.blur(); } });
     t.addEventListener('blur', () => this.grid.focus());
     document.getElementById('add-sheet').addEventListener('click', () => this.cmd('addSheet'));
-    document.getElementById('all-sheets').addEventListener('click', e => openMenu(this.wb.sheets.map((sh, i) => ({
-      label: sh.name, icon: sh.hidden ? 'visibility_off' : sh.protect ? 'lock' : null, checked: () => i === this.wb.active,
-      run: () => { if (sh.hidden) this.cmd('unhideSheet', sh); this.switchSheet(i); },
-    })), e.currentTarget.getBoundingClientRect()));
+    document.getElementById('all-sheets').addEventListener('click', e => openMenu(this.sheetItems(), e.currentTarget.getBoundingClientRect()));
+    // phones: the whole menu bar behind one button; a button folds the bars away (landscape starts folded,
+    // with the sheet picker moved up into the top bar)
+    menuButton(this, document.getElementById('btn-menu'));
+    const sheetBtn = document.getElementById('btn-sheet');
+    sheetBtn.addEventListener('click', () => {
+      if (sheetBtn._m?.isConnected) { closeMenus(); return; }
+      sheetBtn._m = openMenu([...this.sheetItems(), { sep: true }, { label: 'Tambahkan sheet', icon: 'add', run: () => this.cmd('addSheet') }], sheetBtn.getBoundingClientRect(), { alignRight: true });
+    });
+    const bars = document.getElementById('btn-bars'), land = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    const barsSync = () => {
+      const hidden = land.matches ? !document.body.classList.contains('bars-show') : document.body.classList.contains('bars-hide');
+      const tip = hidden ? 'Tampilkan bilah alat' : 'Sembunyikan bilah alat';
+      bars.querySelector('.ms').textContent = hidden ? 'keyboard_arrow_down' : 'keyboard_arrow_up';
+      bars.dataset.tip = tip; bars.setAttribute('aria-label', tip);
+    };
+    bars.addEventListener('click', () => { document.body.classList.toggle(land.matches ? 'bars-show' : 'bars-hide'); barsSync(); });
+    land.addEventListener?.('change', barsSync);
+    barsSync();
     const zr = document.getElementById('zoom-range');
     zr.addEventListener('input', () => this.setZoom(+zr.value / 100));
     document.getElementById('zoom-out').addEventListener('click', () => this.setZoom(this.grid.z - 0.1));

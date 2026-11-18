@@ -133,9 +133,8 @@ export class Charts {
 
   place(b, d) {
     const g = this.app.grid, z = g.z;
-    const x = (g.X(Math.min(d.anchor.c, this.app.sheet.cols - 1)) + d.dx) * z;
-    const y = (g.Y(Math.min(d.anchor.r, this.app.sheet.rows - 1)) + d.dy) * z;
-    Object.assign(b.el.style, { left: x + 'px', top: y + 'px', width: d.w * z + 'px', height: d.h * z + 'px' });
+    const p = g.boxAt(b.el, Math.min(d.anchor.r, this.app.sheet.rows - 1), Math.min(d.anchor.c, this.app.sheet.cols - 1), d.dx, d.dy);
+    Object.assign(b.el.style, { left: p.x + 'px', top: p.y + 'px', width: d.w * z + 'px', height: d.h * z + 'px' });
   }
 
   position() {

@@ -276,6 +276,21 @@ body.fx-tall .fx-input, body.fx-tall .fx-hl { overflow-y: auto; }
 .grid-scroller { position: absolute; inset: 0; overflow: scroll; z-index: 1; outline: none; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .grid-spacer { position: relative; }
 .grid-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; }
+/* touch screens (grid.js setLayered): cells, headers and frozen panes ride inside the scrolled content,
+   so the browser moves them at full frame rate; sticky strips keep the headers in place */
+.grid.layered .grid-canvas { display: none; }
+.grid:not(.layered) .gl { display: none; }
+.gl { pointer-events: none; overflow: hidden; }
+.gl-cells, .gl-main { position: absolute; left: 0; top: 0; }
+.gl-cells { z-index: 0; }
+.gl-main { z-index: 1; }
+.gl-top, .gl-left, .gl-corner { position: -webkit-sticky; position: sticky; }
+.gl-top { top: 0; z-index: 3; }
+.gl-left { left: 0; z-index: 3; }
+.gl-corner { top: 0; left: 0; z-index: 4; }
+.gl-c { position: absolute; left: 0; top: 0; }
+.gl-boxes { position: absolute; inset: 0; }
+.grid.layered .add-rows { z-index: 2; }
 body.painting .grid-scroller { cursor: copy !important; }
 .grid-scroller::-webkit-scrollbar { width: 12px; height: 12px; }
 .grid-scroller::-webkit-scrollbar-thumb { background: rgba(120, 124, 130, .45); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
@@ -393,6 +408,7 @@ h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--text-2);
 /* ---------- menus & popups ---------- */
 #popups { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
 #popups > * { pointer-events: auto; }
+#popups > .warm { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: .01; background: #000; pointer-events: none; }
 .menu {
   position: fixed; min-width: 230px; max-width: 360px; max-height: calc(100vh - 16px); overflow: auto; padding: 6px; border-radius: 14px;
   background: var(--sheen), var(--glass-strong); animation: pop .12s ease-out; z-index: 50;
@@ -700,24 +716,102 @@ body.dropping::after { content: "Lepaskan file untuk mengimpor"; position: fixed
   body.side-open .sidebar { position: fixed; right: 8px; top: 8px; bottom: 8px; width: min(360px, calc(100vw - 16px)); z-index: 30; }
 }
 @media (max-width: 640px) {
-  #app { padding: 6px; gap: 5px; }
-  .topbar { padding: 4px 6px; min-height: 52px; border-radius: 14px; }
-  .logo { width: 36px; height: 36px; }
-  .doc-title { font-size: 15px; max-width: 52vw; }
-  .menubar { overflow-x: auto; scrollbar-width: none; }
-  .menubar::-webkit-scrollbar { display: none; }
-  .mb-item { padding: 3px 6px; font-size: 13px; }
-  #btn-history { display: none; }
-  .share span:last-child { display: none; }
-  .share { padding: 0 10px; height: 34px; }
   .zoom input[type=range], #zoom-out, #zoom-in { display: none; }
   .stat-btn .stat:nth-child(n+2) { display: none; }
   .grid2 { grid-template-columns: 1fr; }
   .fc-num { grid-template-columns: 1fr; }
   .fc-cats { flex-direction: row; flex-wrap: wrap; border: 0; }
-  .namebox { width: 70px; }
   .findbar { left: 8px; right: 8px; }
   .findbar .inp { width: auto; flex: 1; }
+}
+
+/* ---------- phones: slim bars; landscape folds them all away so the sheet gets the screen ----------
+   The menu bar becomes one ☰ button (#btn-menu), #btn-bars hides / shows the toolbar and formula bar,
+   landscape starts with only the top bar (sheet picker #btn-sheet moves up there) until #btn-bars opens the rest. */
+#btn-sheet, #btn-menu, #btn-bars { display: none; }
+.sheet-btn {
+  height: 26px; max-width: 30vw; border: 0; background: var(--hover); border-radius: 8px; padding: 0 1px 0 9px; align-items: center;
+  font: 500 12.5px var(--font); color: var(--accent); white-space: nowrap; flex: none; margin-right: 2px;
+}
+.sheet-btn-name { overflow: hidden; text-overflow: ellipsis; }
+.sheet-btn .ms { font-size: 18px; }
+@media (max-width: 640px), (orientation: landscape) and (max-height: 500px) {
+  #btn-menu, #btn-bars { display: inline-grid; }
+  .menubar, #btn-theme, #btn-history, .tb-right { display: none !important; }
+  #app { padding: 4px; gap: 4px; }
+  .topbar { min-height: 0; height: 40px; padding: 0 4px 0 3px; gap: 4px; border-radius: 12px; }
+  .logo { width: 30px; height: 30px; padding: 2px; border-radius: 9px; }
+  .logo img { width: 25px; height: 25px; }
+  .title-row { gap: 4px; }
+  .doc-title { font-size: 14px; padding: 2px 4px; min-width: 60px; max-width: none; }
+  .save-state .ms { font-size: 15px; }
+  .top-actions { gap: 0; }
+  .top-actions .icon-btn { width: 32px; height: 32px; }
+  .top-actions .icon-btn .ms { font-size: 21px; }
+  .share { width: 32px; height: 32px; padding: 0; border-radius: 50%; margin-left: 2px; gap: 0; }
+  .share span:last-child { display: none; }
+  .share .ms { font-size: 18px; }
+  .toolbar { height: 34px; padding: 0 3px; }
+  .tb-btn { height: 28px; min-width: 28px; padding: 0 3px; border-radius: 7px; }
+  .tb-btn .ms { font-size: 19px; }
+  .tb-btn .caret { font-size: 16px; width: 12px; }
+  .tb-sep { margin: 0 3px; height: 16px; }
+  .tb-font { width: 96px; }
+  .tb-size { width: 32px; height: 24px; }
+  .fxbar { height: 28px; border-radius: 10px; }
+  .namebox { width: 62px; height: 22px; font-size: 12px; padding: 0 4px; }
+  .nb-drop { height: 22px !important; }
+  .fx-sep { margin: 0 4px; height: 14px; }
+  .fx-icon { font-size: 13px; padding: 0 6px 0 0; }
+  .fx-input, .fx-hl { padding-top: 5px; }
+  .fx-expand { width: 26px !important; height: 26px !important; }
+  .bottombar { height: 34px; padding: 0 2px; border-radius: 12px; }
+  .bottombar .icon-btn { width: 30px; height: 30px; }
+  .bottombar .icon-btn .ms { font-size: 19px; }
+  .tabs { padding: 3px 4px; }
+  .tab { padding: 0 2px 0 10px; font-size: 13px; border-radius: 8px; }
+  .tab-caret { width: 20px; height: 20px; }
+  .zoom { margin-left: 2px; }
+  .stat-btn { padding: 2px 2px 2px 6px; font-size: 12px; }
+  /* menus: denser rows, no keyboard shortcuts (there is no keyboard) */
+  .menu { min-width: 200px; max-width: calc(100vw - 12px); max-height: calc(100dvh - 12px); padding: 4px; border-radius: 12px; }
+  .menu-item { min-height: 30px; gap: 8px; padding: 0 8px 0 6px; font-size: 13.5px; border-radius: 7px; }
+  .mi-icon { width: 20px; }
+  .mi-icon .ms { font-size: 18px; }
+  .mi-kbd { display: none; }
+  .menu-sep { margin: 3px 4px; }
+  .menu-head { padding: 4px 8px 2px; font-size: 11px; }
+  body.side-open .sidebar { top: 4px; bottom: 4px; right: 4px; }
+}
+/* portrait phone: the toolbar + formula bar fold away on request */
+@media (max-width: 640px) and (orientation: portrait), (max-width: 640px) and (min-height: 501px) {
+  body.bars-hide .toolbar, body.bars-hide .fxbar { display: none; }
+}
+/* landscape phone: only a slim top bar until the bars are asked for */
+@media (orientation: landscape) and (max-height: 500px) {
+  #btn-sheet { display: inline-flex; }
+  #app { gap: 3px; padding: 3px 4px; }
+  html:not(.am-box) #app { padding: 3px max(4px, env(safe-area-inset-right)) max(3px, calc(env(safe-area-inset-bottom) - 12px)) max(4px, env(safe-area-inset-left)); }
+  .topbar { height: 32px; border-radius: 10px; padding: 0 3px 0 2px; }
+  .logo { width: 26px; height: 26px; padding: 1px; border-radius: 8px; }
+  .logo img { width: 22px; height: 22px; }
+  .doc-title { font-size: 13px; }
+  .top-actions .icon-btn { width: 28px; height: 28px; }
+  .top-actions .icon-btn .ms { font-size: 20px; }
+  .share { width: 28px; height: 28px; }
+  .share .ms { font-size: 16px; }
+  .toolbar { height: 30px; }
+  .tb-btn { height: 26px; min-width: 26px; }
+  .tb-btn .ms { font-size: 18px; }
+  .fxbar { height: 26px; }
+  .bottombar { height: 28px; border-radius: 10px; }
+  .bottombar .icon-btn { width: 26px; height: 26px; }
+  .bottombar .icon-btn .ms { font-size: 18px; }
+  .tabs { padding: 2px 4px; }
+  .tab { font-size: 12.5px; }
+  .menu-item { min-height: 27px; font-size: 13px; }
+  .menu-head { padding: 2px 8px 1px; }
+  body:not(.bars-show) .toolbar, body:not(.bars-show) .fxbar, body:not(.bars-show) .bottombar { display: none; }
 }
 @media print { .wallpaper { display: none; } }
 

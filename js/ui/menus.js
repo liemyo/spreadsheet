@@ -336,6 +336,16 @@ export function buildMenubar(app, host) {
   host.append(el('span.flex1'), search);
 }
 
+// Phones: the menu bar does not fit, so one button lists its menus and each opens as a submenu (click-only too).
+const MENU_ICONS = { File: 'description', Edit: 'edit', Lihat: 'visibility', Sisipkan: 'add_box', Format: 'format_paint', 'Tata letak': 'article', Data: 'table_view', Alat: 'build', Bantuan: 'help' };
+export function menuButton(app, btn) {
+  let m = null;
+  btn.addEventListener('click', () => {
+    if (m?.isConnected) { closeMenus(); m = null; return; }
+    m = openMenu(Object.entries(menus(app)).map(([label, sub]) => ({ label, icon: MENU_ICONS[label], sub })), btn.getBoundingClientRect(), { alignRight: true });
+  });
+}
+
 // Data › Proteksi & izin: password lock of the sheet (with cells left open) and viewer-editable cells of share links.
 export function protectItems(app) {
   const sh = app.sheet;

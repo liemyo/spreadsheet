@@ -141,7 +141,8 @@ export function buildToolbar(app, host) {
     const gs = [...wrap.querySelectorAll('.tb-group')];
     gs.forEach(g => { g.classList.remove('ovf'); wrap.querySelector(`.tb-sep[data-for="${g.dataset.id}"]`).classList.remove('ovf'); });
     more.style.display = 'none';
-    const avail = host.clientWidth - 84;
+    const right = host.querySelector('.tb-right');   // hidden on phones (the top bar folds the bars instead)
+    const avail = host.clientWidth - 44 - (right && right.offsetWidth ? right.offsetWidth + 6 : 0);
     const used = () => { let w = 0; for (const ch of wrap.children) if (ch.offsetWidth) w += ch.offsetWidth + 12 * (ch.classList.contains('tb-sep') ? 1 : 0); return w; };
     const order = [...gs].sort((a, b) => b.dataset.pri - a.dataset.pri || gs.indexOf(b) - gs.indexOf(a));
     let i = 0;

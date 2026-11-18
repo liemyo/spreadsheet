@@ -282,8 +282,9 @@ export function initTooltips() {
   tipEl = el('div.tooltip');
   document.body.append(tipEl);
   document.addEventListener('pointerover', e => {
-    const t = e.target.closest('[data-tip]');
     clearTimeout(tipT);
+    if (e.pointerType === 'touch') { tipEl.classList.remove('show'); return; }   // a finger has no hover: no tips on taps
+    const t = e.target.closest('[data-tip]');
     if (!t) { tipEl.classList.remove('show'); return; }
     tipT = setTimeout(() => {
       const r = t.getBoundingClientRect();
