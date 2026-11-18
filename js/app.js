@@ -19,6 +19,7 @@ import * as io from './io.js';
 import { TEMPLATES } from './templates.js';
 import * as SH from './sharing.js';
 import * as PG from './pages.js';
+import * as PR from './print.js';
 import * as LK from './lock.js';
 import { shareKey, errText } from './live.js';
 
@@ -524,6 +525,7 @@ export class App {
 
   // ---------- keyboard ----------
   bindKeys() {
+    PR.installPrint(this);
     document.addEventListener('keydown', e => {
       if (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]') ) return;
       if (document.body.classList.contains('file-locked')) return;
@@ -1180,7 +1182,7 @@ export const COMMANDS = {
   changeCase: (app, mode) => app.tx('Ubah huruf', () => ops.changeCase(app, app.ranges(), mode)),
   flashFill: app => { const n = app.tx('Isi kilat', () => io.flashFill(app)); toast(n ? `Isi kilat mengisi ${n} sel` : 'Isi kilat tidak menemukan pola. Ketik contoh pada sel pertama.'); },
   randomize: app => app.tx('Acak rentang', () => io.shuffleRange(app, sel1(app))),
-  print: app => io.printView(app),
+  print: (app, opts) => PR.printDialog(app, opts),
   repeat: app => { const a = app.lastAction; if (a) COMMANDS[a[0]](app, ...a.slice(1)); },
   newDoc: (app, tpl = 'blank') => { app.save(); const t = TEMPLATES.find(x => x.id === tpl) || TEMPLATES[0]; app.openWorkbook(t.build()); },
   makeCopy: app => { app.save(); const wb = Workbook.fromJSON(app.wb.toJSON()); wb.id = uid('wb'); wb.lock = app.wb.lock; wb.name = 'Salinan dari ' + app.wb.name; app.openWorkbook(wb); toast('Salinan dibuat'); },

@@ -108,7 +108,7 @@ export function menus(app) {
       { label: 'Download', icon: 'download', sub: [
         { label: 'Microsoft Excel (.xlsx)', run: () => io.exportXLSX(app) },
         { label: 'OpenDocument (.ods)', run: () => io.exportXLSX(app, 'ods') },
-        { label: 'Dokumen PDF (.pdf)', hint: 'cetak', run: () => io.printView(app) },
+        { label: 'Dokumen PDF (.pdf)', hint: 'otomatis rapi', run: () => app.cmd('print', { pdf: true }) },
         { label: 'Halaman web (.html)', run: () => io.exportHTML(app) },
         { label: 'Nilai yang dipisahkan koma (.csv)', run: () => io.exportCSV(app, ',') },
         { label: 'Nilai yang dipisahkan tab (.tsv)', run: () => io.exportCSV(app, '\t') },
@@ -126,8 +126,8 @@ export function menus(app) {
       { label: 'Setelan', icon: 'settings', run: () => D.settingsDialog(app) },
       { sep: true },
       { label: 'Penyiapan halaman (kertas & margin)…', icon: 'description', run: () => PG.setupDialog(app) },
-      { label: 'Pratinjau cetak', icon: 'preview', run: () => PG.printPages(app, { sheets: [app.sheet] }) },
-      { label: 'Cetak', icon: 'print', kbd: `${M()}+P`, run: () => io.printView(app) },
+      { label: 'Pratinjau cetak', icon: 'preview', run: () => app.cmd('print') },
+      { label: 'Cetak', icon: 'print', kbd: `${M()}+P`, run: () => app.cmd('print') },
     ],
     Edit: [
       { label: 'Urungkan', icon: 'undo', kbd: `${M()}+Z`, disabled: () => !app.wb.hist.undoS.length, run: () => app.undo() },

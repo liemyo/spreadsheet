@@ -764,6 +764,55 @@ body.ro #doc-title { pointer-events: none; }
   .pagechip > span:not(.ms) { display: none; }
 }
 
+/* ---------- Print dialog (print.js) ---------- */
+.dlg.print-dlg { height: min(880px, calc(100dvh - 32px)); }
+.print-dlg .dlg-body { flex: 1; min-height: 0; display: flex; overflow: hidden; padding: 4px 18px 6px 22px; }
+.prv { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 312px; gap: 18px; }
+.prv-stage { position: relative; min-width: 0; min-height: 0; border-radius: 14px; overflow: hidden; background: #dde2e8; box-shadow: inset 0 0 0 1px var(--line-2); }
+:root.dark .prv-stage { background: #2a2e35; }
+.prv-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; color-scheme: light; }
+.prv-badge { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 5px 12px; border-radius: 999px; background: rgba(32, 33, 36, .78); color: #fff; font-size: 12px; font-weight: 500; pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.prv-badge[hidden] { display: none; }
+.prv-tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 4px; }
+.prv-tools .icon-btn { background: var(--glass-strong); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+.prv-side { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 6px 10px 2px; }
+.prv-sec { gap: 6px; }
+.prv-seg button { gap: 4px; }
+.prv-seg button .ms { font-size: 16px; }
+.prv-scale { display: flex; align-items: center; gap: 6px; }
+.prv-scale .prv-pct { width: 76px; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.prv-unit { color: var(--text-2); margin-left: -2px; }
+.prv-step { width: 32px; height: 32px; border: 1px solid var(--line); background: var(--btn-bg); }
+.prv-step:disabled { opacity: .4; pointer-events: none; }
+.prv-hint { font-size: 12px; color: var(--text-2); line-height: 1.4; }
+.prv-hint:empty { display: none; }
+.prv-m { gap: 6px; }
+.prv-m[hidden] { display: none; }
+.prv-checks { gap: 2px; }
+.prv-checks .check span { font-size: 12.5px; }
+.prv-notes { display: grid; gap: 6px; }
+.prv-notes:empty { display: none; }
+.prv-note { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.4; color: var(--text-2); padding: 7px 10px; border-radius: 10px; background: var(--hover); }
+.prv-note .ms { font-size: 16px; color: #188038; flex: none; margin-top: 1px; }
+.prv-note.warn .ms { color: #b06000; }
+:root.dark .prv-note .ms { color: #81c995; }
+:root.dark .prv-note.warn .ms { color: #fdd663; }
+.prv-info { margin-right: auto; color: var(--text-2); font-size: 12.5px; padding-left: 4px; font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .dlg.print-dlg { height: calc(100dvh - 24px); }
+  .print-dlg .dlg-body { padding: 4px 12px; }
+  .prv { grid-template-columns: 1fr; grid-template-rows: minmax(200px, 44%) minmax(0, 1fr); gap: 12px; }
+  .prv-info { display: none; }
+}
+
+/* ---------- Printing inside the app page (iPhone/iPad, the browser's own Print menu) ---------- */
+#print-root { display: none; }
+@media print {
+  html, body { zoom: 1 !important; background: #fff !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; margin: 0 !important; padding: 0 !important; transform: none !important; }
+  body > :not(#print-root) { display: none !important; }
+  #print-root { display: block !important; }
+}
+
 /* ---------- File lock ---------- */
 body.file-locked #app, body.file-locked #linkchip, body.file-locked #pagechip { visibility: hidden; }
 .lk-screen { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; }

@@ -1,11 +1,10 @@
 // Import/export, printing and data helpers (current region, flash fill, shuffle).
-import { el, icon, key, keyR, keyC, colName, loadScript, LIBS, download, esc, rangeAddr, parseRange, uid } from './util.js';
-import * as PG from './pages.js';
+import { key, keyR, keyC, colName, loadScript, LIBS, download, esc, parseRange, uid } from './util.js';
 import { Workbook, newWorkbook, setInput } from './model.js';
 import { parseInput, format, compile } from './format.js';
 import { FErr } from './formula/core.js';
 import { Special } from './formula/functions.js';
-import { dialog, toast, select, checkbox, field } from './ui/ui.js';
+import { toast } from './ui/ui.js';
 import { snapRange, writeSnap } from './ops.js';
 import { imagesForPrint } from './imgcore.js';
 
@@ -414,7 +413,7 @@ function fromSheetJS(xb, name) {
 }
 
 // ---------- export ----------
-function cellDisplay(app, sh, r, c) {
+export function cellDisplay(app, sh, r, c) {
   const cell = sh.get(r, c);
   let v = cell ? (cell.f != null ? cell.sv : cell.v) : sh.spillMap.get(key(r, c))?.v ?? null;
   if (v == null || v instanceof Special) return '';
@@ -611,10 +610,11 @@ export function sheetHTML(app, sh, g, opts = {}) {
   let html = `<table class="sheet${opts.grid ? ' grid' : ''}"${opts.clip ? ` style="width:${tw}px"` : ''}><colgroup>`;
   for (let c = g.c1; c <= g.c2; c++) if (!sh.hiddenC.has(c)) html += `<col style="width:${sh.colWidth(c)}px">`;
   html += '</colgroup>';
+  const defFs = app.defFont?.fs || 10;
   for (let r = g.r1; r <= g.r2; r++) {
     if (sh.isRowHidden(r)) continue;
     const h = opts.clip ? sh.rowHeight(r) : sh.rowH.get(r);
-    html += `<tr${h ? ` style="height:${h}px"` : ''}>`;
+    let row = '', maxPx = 0, wrapped = false;
     for (let c = g.c1; c <= g.c2; c++) {
       if (sh.hiddenC.has(c) || skip.has(key(r, c))) continue;
       const mm = merged.get(key(r, c));
@@ -641,6 +641,7 @@ export function sheetHTML(app, sh, g, opts = {}) {
       if (st.bl) css.push('border-left:' + cssBorder(st.bl)); if (st.br) css.push('border-right:' + cssBorder(st.br));
       const span = m ? ` rowspan="${m.r2 - m.r1 + 1}" colspan="${m.c2 - m.c1 + 1}"` : '';
       let text = esc(cellDisplay(app, sh, sr, sc)).replace(/\n/g, '<br>');
+      if (opts.blank && opts.blank.has(sr)) text = '';
       if (cell?.link) text = `<a href="${esc(cell.link)}">${text}</a>`;
       if (v instanceof Special && v.kind === 'image') text = `<img src="${esc(v.data.url)}" style="max-width:100%;max-height:100%">`;
       const fl = imgs.get(key(r, c));
@@ -648,9 +649,13 @@ export function sheetHTML(app, sh, g, opts = {}) {
         if (!css.some(x => x.startsWith('overflow:visible'))) css.push('position:relative;overflow:visible');
         for (const d of fl) text += `<img src="${esc(d.src)}" alt="" style="position:absolute;left:${+d.x.toFixed(2)}px;top:${+d.y.toFixed(2)}px;width:${+d.w.toFixed(2)}px;height:${+d.h.toFixed(2)}px;max-width:none;max-height:none;z-index:${3 + d.z};pointer-events:none">`;
       }
-      html += `<td${span} style="${css.join(';')}">${text}</td>`;
+      if (text) { if (st.wrap === 'wrap' || text.includes('<br>')) wrapped = true; else maxPx = Math.max(maxPx, ((st.fs || defFs) * 4) / 3); }
+      row += `<td${span} style="${css.join(';')}">${text}</td>`;
     }
-    html += '</tr>';
+    // printed pages: a row keeps its sheet height (a big font would otherwise stretch it and push rows off the page)
+    let trs = h ? `height:${h}px` : '';
+    if (opts.clip && h && maxPx && !wrapped && maxPx * 1.25 + 2 > h) trs += `;--lh:${Math.max(0.8, (h - 2) / maxPx).toFixed(3)}`;
+    html += `<tr${trs ? ` style="${trs}"` : ''}>${row}</tr>`;
   }
   return html + '</table>';
 }
@@ -666,24 +671,8 @@ table.sheet.grid td{outline:1px solid #d9d9d9;outline-offset:-0.5px}
 .noprint{position:fixed;top:12px;right:12px;font:500 13px Inter,Arial;background:#1a73e8;color:#fff;border:0;border-radius:18px;padding:9px 18px;cursor:pointer}
 `;
 
-export function printView(app) {
-  const sh = app.sheet;
-  const selG = app.grid.range;
-  const hasSel = selG.r1 !== selG.r2 || selG.c1 !== selG.c2;
-  let scope = hasSel ? 'sel' : 'sheet';
-  const L = PG.layout(app, sh), P = L.p;
-  const info = el('div.muted.small', `${PG.PAPER[P.size]?.n || 'A4'} ${P.orient === 'landscape' ? 'lanskap' : 'potret'} · margin ${[P.m.t, P.m.b, P.m.l, P.m.r].map(x => String(+x.toFixed(2)).replace('.', ',')).join(' / ')} cm · ${P.fit === 'width' ? 'sesuai lebar' : P.fit === 'page' ? '1 halaman' : P.scale + '%'}${P.auto ? ' · tabel tidak dipotong' : ''}`);
-  dialog({
-    title: 'Cetak', width: 440,
-    body: el('div.stack',
-      field('Cetak', select([{ value: 'sheet', label: 'Sheet saat ini' }, { value: 'all', label: 'Seluruh workbook' }, ...(hasSel ? [{ value: 'sel', label: `Sel yang dipilih (${rangeAddr(selG)})` }] : [])], scope, v => (scope = v))),
-      info),
-    buttons: [{ label: 'Kertas & margin…', run: () => { PG.setupDialog(app); } }, { spacer: true }, { label: 'Batal' }, { label: 'Lanjut', primary: true, run: () => {
-      if (scope === 'all') PG.printPages(app, { sheets: app.wb.sheets.filter(s => !s.hidden), auto: true });
-      else PG.printPages(app, { sheets: [sh], area: scope === 'sel' ? { r1: selG.r1, c1: selG.c1, r2: selG.r2, c2: selG.c2 } : null, auto: true });
-    } }],
-  });
-}
+// Print / PDF: the dialog in print.js (auto area, fitting, preview, scale − / +).
+export function printView(app, opts) { return app.cmd('print', opts); }
 
 export function exportHTML(app) {
   const parts = app.wb.sheets.filter(s => !s.hidden).map(s => `<h2>${esc(s.name)}</h2>` + app.withSheet(s, () => sheetHTML(app, s, s.usedRange() || { r1: 0, c1: 0, r2: 0, c2: 0 }, { grid: true })));
