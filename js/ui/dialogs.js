@@ -4,7 +4,6 @@ import { dialog, popup, closeMenus, toast, confirmDlg, promptDlg, field, select,
 import { format, compile, NUMBER_FORMATS, MORE_FORMATS, L, LOCALES, fmtSmart } from '../format.js';
 import { serial } from '../util.js';
 import { DOCS, CATEGORIES, allFunctions } from '../docs.js';
-import { TEMPLATES } from '../templates.js';
 import * as ops from '../ops.js';
 import * as io from '../io.js';
 import * as store from '../store.js';
@@ -501,41 +500,8 @@ export function errorCheckDialog(app) {
 }
 
 // ---------- documents ----------
-export async function openDialog(app, tab = 'recent') {
-  const docs = await store.listDocs();
-  const body = el('div.home');
-  const tabs = el('div.tabs-h');
-  const pages = {};
-  const show = id => { tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.id === id)); Object.entries(pages).forEach(([k, p]) => (p.style.display = k === id ? '' : 'none')); };
-  let d;
-  // recent
-  const search = el('input.inp', { placeholder: 'Telusuri spreadsheet', 'aria-label': 'Telusuri' });
-  const list = el('div.doc-list');
-  const draw = () => {
-    list.innerHTML = '';
-    const q = search.value.toLowerCase();
-    const items = docs.filter(x => !q || x.name.toLowerCase().includes(q));
-    if (!items.length) list.append(el('div.empty', icon('folder_off'), el('span', 'Belum ada spreadsheet tersimpan')));
-    for (const x of items) {
-      const row = el('div.doc-row' + (x.id === app.wb.id ? '.current' : ''),
-        el('span.doc-ic', icon(x.locked ? 'lock' : 'grid_on')),
-        el('div.doc-main', el('div.doc-name', x.name), el('div.muted.small', new Date(x.updated).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) + ' · ' + x.sheets + ' sheet')),
-        el('button.icon-btn', { type: 'button', 'data-tip': 'Hapus', onclick: async e => { e.stopPropagation(); if (await confirmDlg('Hapus spreadsheet', `Hapus "${x.name}" dari perangkat ini?`, 'Hapus', true)) { await store.deleteDoc(x.id); docs.splice(docs.indexOf(x), 1); draw(); if (x.id === app.wb.id) app.cmd('newDoc', 'blank'); } } }, icon('delete')));
-      row.addEventListener('click', async () => { d.close(); if (x.id === app.wb.id) return; await app.save(); const j = await store.loadDoc(x.id); if (j) app.openWorkbook((await import('../model.js')).Workbook.fromJSON(j)); });
-      list.append(row);
-    }
-  };
-  search.addEventListener('input', draw);
-  draw();
-  pages.recent = el('div.stack', el('div.row', search, el('button.btn', { type: 'button', onclick: () => { d.close(); importDialog(app); } }, icon('upload_file'), 'Impor file')), list);
-  // templates
-  pages.templates = el('div.tpl-grid', ...TEMPLATES.filter(t => t.id !== 'welcome').map(t => el('button.tpl', { type: 'button', onclick: () => { d.close(); app.cmd('newDoc', t.id); } },
-    el('div.tpl-thumb', { dataset: { kind: t.id } }, icon(t.icon)), el('div.tpl-name', t.name), el('div.muted.small', t.desc))));
-  tabs.append(el('button', { type: 'button', dataset: { id: 'recent' }, onclick: () => show('recent') }, 'Terbaru'), el('button', { type: 'button', dataset: { id: 'templates' }, onclick: () => show('templates') }, 'Template'));
-  body.append(tabs, pages.recent, pages.templates);
-  show(tab);
-  d = dialog({ title: 'Buka spreadsheet', width: 680, cls: 'dlg-home', body });
-}
+// Buka spreadsheet (list, favourites, colour categories, Sampah): ./files.js
+export { openDialog } from './files.js';
 
 export function importDialog(app) {
   const file = el('input', { type: 'file', accept: '.xlsx,.xlsm,.xls,.ods,.csv,.tsv,.txt,.json', style: { display: 'none' } });
@@ -568,13 +534,13 @@ export async function importFile(app, f, mode = 'new') {
   }
 }
 
+// File › Pindahkan ke sampah: the open workbook goes to the trash (30 days), the newest other file opens.
 export async function deleteDocDialog(app) {
-  if (!(await confirmDlg('Hapus spreadsheet', `Hapus "${app.wb.name}" dari perangkat ini? Tindakan ini tidak dapat diurungkan.`, 'Hapus', true))) return;
-  await store.deleteDoc(app.wb.id);
-  const docs = await store.listDocs();
-  if (docs.length) { const j = await store.loadDoc(docs[0].id); app.openWorkbook((await import('../model.js')).Workbook.fromJSON(j)); }
-  else app.cmd('newDoc', 'blank');
-  toast('Spreadsheet dihapus');
+  const id = app.wb.id, name = app.wb.name;
+  await app.save();
+  store.trashDoc(id);
+  await app.openNewest(id);
+  toast(`"${name}" dipindahkan ke sampah`, { ms: 6000, action: { label: 'Urungkan', run: async () => { store.restoreDoc(id); if (app.wb.id !== id) await app.openDocById(id); } } });
 }
 
 // Bagikan: live share links, see ../sharing.js

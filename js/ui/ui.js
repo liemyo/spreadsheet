@@ -50,7 +50,7 @@ export function openMenu(items, at, opts = {}) {
     if (it.node) { menu.append(typeof it.node === 'function' ? it.node(() => closeMenus()) : it.node); continue; }
     const dis = isOn(it.disabled), chk = isOn(it.checked);
     const row = el('div.menu-item' + (dis ? '.disabled' : '') + (it.sub ? '.has-sub' : ''), { role: 'menuitem', tabIndex: -1 },
-      el('span.mi-icon', chk ? icon('check') : it.icon ? icon(it.icon) : it.swatch ? el('span.swatch', { style: { background: it.swatch } }) : ''),
+      el('span.mi-icon', chk ? icon('check') : it.icon ? icon(it.icon) : it.swatch ? el('span.swatch' + (it.round ? '.round' : ''), { style: { background: it.swatch } }) : ''),
       el('span.mi-label', it.label, it.hint ? el('span.mi-hint', it.hint) : null),
       it.kbd ? el('span.mi-kbd', it.kbd) : null,
       it.sub ? icon('chevron_right', 'mi-arrow') : null);
@@ -86,7 +86,8 @@ export function openMenu(items, at, opts = {}) {
   return menu;
 }
 
-// keyboard navigation inside the top-most menu
+// keyboard navigation inside the top-most menu (stopImmediatePropagation: a dialog under the menu must not
+// also take the Esc / Enter, and the grid must not move with the arrows)
 document.addEventListener('keydown', e => {
   if (!openMenus.length) return;
   const m = openMenus[openMenus.length - 1];
@@ -94,12 +95,12 @@ document.addEventListener('keydown', e => {
   if (!rows.length && e.key !== 'Escape') return;
   const i = rows.findIndex(r => r.classList.contains('kb'));
   const setKb = j => { rows.forEach(r => r.classList.remove('kb')); rows[j]?.classList.add('kb'); rows[j]?.scrollIntoView({ block: 'nearest' }); };
-  if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setKb((i + 1) % rows.length); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setKb((i - 1 + rows.length) % rows.length); }
-  else if (e.key === 'ArrowRight' && i >= 0 && rows[i]._it.sub) { e.preventDefault(); e.stopPropagation(); if (!rows[i].classList.contains('sub-open')) rows[i]._openSub(); const sm = openMenus[openMenus.length - 1]; if (sm !== m) sm?._rows?.find(r => !r.classList.contains('disabled'))?.classList.add('kb'); }
-  else if (e.key === 'ArrowLeft' && openMenus.length > 1) { e.preventDefault(); e.stopPropagation(); if (m._parent?._closeSub) m._parent._closeSub(); else { m.remove(); openMenus.pop(); } }
-  else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); e.stopPropagation(); rows[i].click(); }
-  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenus(); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); e.stopImmediatePropagation(); setKb((i + 1) % rows.length); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopImmediatePropagation(); setKb((i - 1 + rows.length) % rows.length); }
+  else if (e.key === 'ArrowRight' && i >= 0 && rows[i]._it.sub) { e.preventDefault(); e.stopImmediatePropagation(); if (!rows[i].classList.contains('sub-open')) rows[i]._openSub(); const sm = openMenus[openMenus.length - 1]; if (sm !== m) sm?._rows?.find(r => !r.classList.contains('disabled'))?.classList.add('kb'); }
+  else if (e.key === 'ArrowLeft' && openMenus.length > 1) { e.preventDefault(); e.stopImmediatePropagation(); if (m._parent?._closeSub) m._parent._closeSub(); else { m.remove(); openMenus.pop(); } }
+  else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); e.stopImmediatePropagation(); rows[i].click(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeMenus(); }
 }, true);
 document.addEventListener('pointerdown', e => {
   if (!openMenus.length) return;
@@ -142,6 +143,7 @@ export function dialog({ title, body, buttons = [], width = 460, onClose, cls = 
   back.append(box);
   back.addEventListener('pointerdown', e => { if (e.target === back && !noBackdropClose) close(); });
   const key = e => {
+    if (back.nextElementSibling || openMenus.length) return;   // another dialog on top, or a menu opened from this one (it takes Esc / Enter / arrows)
     if (e.key === 'Escape') { e.stopPropagation(); close(); }
     if (e.key === 'Enter' && !e.shiftKey && !e.target.dataset?.enter && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT') {
       const p = buttons.find(b => b.primary);

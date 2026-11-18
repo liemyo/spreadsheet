@@ -89,7 +89,7 @@ export function el(sel, attrs, ...kids) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v == null || v === false) continue;
       if (k.startsWith('on')) node.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
+      else if (k === 'style' && typeof v === 'object') { for (const [p, x] of Object.entries(v)) { if (p.startsWith('--')) node.style.setProperty(p, x); else node.style[p] = x; } }
       else if (k === 'html') node.innerHTML = v;
       else if (k === 'dataset') Object.assign(node.dataset, v);
       else if (k in node && typeof v !== 'string') node[k] = v;

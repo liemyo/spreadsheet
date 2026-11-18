@@ -5,6 +5,8 @@ import { NUMBER_FORMATS, L } from '../format.js';
 import { DOCS, CATEGORIES } from '../docs.js';
 import { TEMPLATES } from '../templates.js';
 import * as D from './dialogs.js';
+import { colorItems } from './files.js';
+import * as store from '../store.js';
 import * as io from '../io.js';
 import { THEME_FONTS } from './toolbar.js';
 import * as SH from '../sharing.js';
@@ -116,11 +118,14 @@ export function menus(app) {
       ] },
       { sep: true },
       { label: 'Ganti nama', icon: 'drive_file_rename_outline', run: () => { const t = document.getElementById('doc-title'); t.focus(); t.select(); } },
+      { label: app.isFav() ? 'Hapus dari favorit' : 'Tambahkan ke favorit', icon: 'star', run: () => app.toggleFav() },
+      { label: 'Kategori warna', icon: 'palette', sub: () => colorItems(store.docMeta(app.wb.id).c || null, c => app.setDocColor(c), () => app.updateDocMeta()) },
       { label: 'Histori versi', icon: 'history', sub: [
         { label: 'Beri nama versi saat ini', run: async () => { const n = await promptDlg('Beri nama versi', 'Nama versi', ''); if (n) { await (await import('../store.js')).saveVersion(app.wb, n); toast('Versi disimpan'); } } },
         { label: 'Lihat histori versi', run: () => app.sidebar.open('versions') },
       ] },
-      { label: 'Hapus', icon: 'delete', run: () => D.deleteDocDialog(app) },
+      { label: 'Pindahkan ke sampah', icon: 'delete', run: () => D.deleteDocDialog(app) },
+      { label: 'Sampah', icon: 'delete_sweep', hint: `disimpan ${store.TRASH_DAYS} hari`, run: () => D.openDialog(app, 'trash') },
       { sep: true },
       { label: 'Keamanan file', icon: 'lock', sub: () => LK.menuItems(app) },
       { label: 'Setelan', icon: 'settings', run: () => D.settingsDialog(app) },

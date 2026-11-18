@@ -11,6 +11,7 @@ import { openMenu, popup, closeMenus, toast, dialog, promptDlg, confirmDlg, init
 import { buildMenubar, menuButton, cellContextMenu, colContextMenu, rowContextMenu, tabContextMenu } from './ui/menus.js';
 import { buildToolbar } from './ui/toolbar.js';
 import * as D from './ui/dialogs.js';
+import { starEl, colorItems } from './ui/files.js';
 import { Sidebar } from './ui/sidebar.js';
 import { Charts } from './charts.js';
 import { FloatImages } from './floatimg.js';
@@ -81,6 +82,7 @@ export class App {
     // while the loader is up and the workbook is still being read.
     if (this.grid.touchUI) document.getElementById('popups').append(el('i.warm', { 'aria-hidden': 'true' }));
     await store.ready();
+    await store.purgeTrash().catch(() => 0);   // files 30 days in the trash are deleted for good
     const params = new URLSearchParams(location.search);
     let wb = null;
     const sk = shareKey();
@@ -96,8 +98,10 @@ export class App {
       try { wb = Workbook.fromJSON(await store.decodeShare(location.hash.slice(3))); wb.id = uid('wb'); wb.name += ' (salinan)'; history.replaceState(null, '', location.pathname); toast('Spreadsheet dibuka dari tautan bagikan'); } catch (e) { console.error(e); toast('Tautan bagikan tidak valid'); }
     }
     if (!wb) {
-      const id = params.get('id') || store.lastDoc();
+      let id = params.get('id'), skip = null;
+      if (!id) { id = store.lastDoc(); if (id && store.isTrashed(id)) { skip = id; id = null; } }   // moved to the trash (maybe on another device)
       if (id) { const j = await store.loadDoc(id); if (j) wb = Workbook.fromJSON(j); }
+      if (!wb && skip) { const next = (await store.listDocs()).find(x => !x.trashed); const j = next && await store.loadDoc(next.id); if (j) wb = Workbook.fromJSON(j); }
     }
     if (!wb) { wb = TEMPLATES.find(t => t.id === 'welcome').build(); }
     this.openWorkbook(wb, true);
@@ -130,14 +134,86 @@ export class App {
     if (!initial) this.save();
     SH.startLive(this);
     this.updateLockBadge();
+    this.updateDocMeta();
     LK.gate(this, wb);
     if (!document.body.classList.contains('file-locked')) this.grid.focus();
   }
   openOther() { D.openDialog(this); }
+  // Before another file opens: store this one, except an untouched blank sheet (the start page's
+  // "Spreadsheet tanpa judul" would otherwise pile up in the file list every time another file is opened).
+  saveBeforeSwitch() {
+    const wb = this.wb;
+    if (!wb) return Promise.resolve();
+    const sh = wb.sheets[0];
+    if (!wb.dirty && wb.sheets.length === 1 && !sh.cells.size && !sh.charts?.length && !sh.images?.length) return Promise.resolve();
+    return this.save();
+  }
+  async openDocById(id) {
+    if (this.wb?.id === id) return true;
+    await this.saveBeforeSwitch();
+    const j = await store.loadDoc(id);
+    if (j) this.openWorkbook(Workbook.fromJSON(j));
+    return !!j;
+  }
+  // The open workbook went to the trash (or was deleted): open the newest other file, else a fresh blank one
+  // (not saved until something is typed, like the first start).
+  async openNewest(except = []) {
+    const skip = new Set([].concat(except));
+    for (const x of await store.listDocs()) {
+      if (x.trashed || skip.has(x.id)) continue;
+      const j = await store.loadDoc(x.id);
+      if (j) { this.openWorkbook(Workbook.fromJSON(j)); return; }
+    }
+    this.openWorkbook(newWorkbook(), true);
+  }
+  renameDoc(v) {
+    v = String(v || '').trim() || 'Spreadsheet tanpa judul';
+    if (v !== this.wb.name) this.tx('Ganti nama', () => { this.wb.hist.touchWb(); this.wb.name = v; });
+    this.titleInput.value = this.wb.name;
+    document.title = this.wb.name + ' – Amatu Sheets';
+  }
+  isFav() { return !!(this.wb && store.docMeta(this.wb.id).f); }
+  toggleFav() {
+    const on = !this.isFav();
+    store.setDocMeta(this.wb.id, { f: on ? 1 : null });
+    if (on) this.save();   // a fresh blank file is stored on its first edit: store it now so the list shows it
+    toast(on ? 'Ditambahkan ke favorit · selalu di atas daftar file' : 'Dihapus dari favorit', { ms: 2200 });
+  }
+  setDocColor(c) { store.setDocMeta(this.wb.id, { c }); if (c) this.save(); }
+  // star next to the title, and a badge while the open file sits in the trash (moved there in another tab or device)
+  updateDocMeta() {
+    if (!this.wb) return;
+    const m = store.docMeta(this.wb.id);
+    const fb = document.getElementById('fav-btn');
+    if (fb) {
+      const tip = m.f ? 'Hapus dari favorit' : 'Tambahkan ke favorit';
+      fb.classList.toggle('on', !!m.f); fb.querySelector('.star-ic')?.classList.toggle('on', !!m.f);
+      fb.setAttribute('aria-pressed', String(!!m.f)); fb.setAttribute('aria-label', tip); fb.dataset.tip = tip;
+    }
+    // colour category dot after the star (only when the file has one)
+    let cb = document.getElementById('cat-btn');
+    const col = store.labelColor(m.c);
+    if (!col) cb?.remove();
+    else {
+      if (!cb) {
+        cb = el('button.cat-btn#cat-btn', { type: 'button', onclick: e => openMenu(colorItems(store.docMeta(this.wb.id).c || null, c => this.setDocColor(c), () => this.updateDocMeta()), e.currentTarget.getBoundingClientRect()) }, el('i'));
+        (fb || this.titleInput).after(cb);
+      }
+      const tip = 'Kategori: ' + store.labelName(m.c);
+      cb.style.setProperty('--fc', col); cb.dataset.tip = tip; cb.setAttribute('aria-label', tip);
+    }
+    let b = document.getElementById('trash-badge');
+    if (!m.t) { b?.remove(); return; }
+    if (!b) {
+      b = el('button.trash-badge#trash-badge', { type: 'button', 'data-tip': `Spreadsheet ini ada di sampah dan dihapus permanen setelah ${store.TRASH_DAYS} hari. Klik untuk memulihkan.`,
+        onclick: () => { store.restoreDoc(this.wb.id); toast('Spreadsheet dipulihkan dari sampah'); } }, icon('delete'), el('span', 'Di sampah · Pulihkan'));
+      this.saveState.after(b);
+    }
+  }
   updateLockBadge() {
     let b = document.getElementById('lock-badge');
     if (!this.wb?.lock) { b?.remove(); return; }
-    if (!b) { b = el('button.icon-btn.sm#lock-badge', { type: 'button', 'data-tip': 'Dikunci dengan kata sandi', 'aria-label': 'Keamanan file', onclick: e => openMenu(LK.menuItems(this), e.currentTarget.getBoundingClientRect()) }, icon('lock')); this.titleInput.after(b); }
+    if (!b) { b = el('button.icon-btn.sm#lock-badge', { type: 'button', 'data-tip': 'Dikunci dengan kata sandi', 'aria-label': 'Keamanan file', onclick: e => openMenu(LK.menuItems(this), e.currentTarget.getBoundingClientRect()) }, icon('lock')); (document.getElementById('fav-btn') || this.titleInput).after(b); }
   }
 
   // ---------- share links ----------
@@ -889,7 +965,13 @@ export class App {
 
   bindChrome() {
     const t = document.getElementById('doc-title');
-    t.addEventListener('change', () => { const v = t.value.trim() || 'Spreadsheet tanpa judul'; this.tx('Ganti nama', () => { this.wb.hist.touchWb(); this.wb.name = v; }); document.title = v + ' – Amatu Sheets'; t.blur(); });
+    t.addEventListener('change', () => { this.renameDoc(t.value); t.blur(); });
+    const fav = document.getElementById('fav-btn');
+    fav.append(starEl());
+    fav.addEventListener('click', () => this.toggleFav());
+    // favourite / colour / trash changed here (as:docmeta), in another tab or on another device (storage)
+    addEventListener('as:docmeta', () => this.updateDocMeta());
+    addEventListener('storage', e => { if (e.key === 'as.docmeta' || e.key === null) this.updateDocMeta(); });
     t.addEventListener('keydown', e => { if (e.key === 'Enter') t.blur(); if (e.key === 'Escape') { t.value = this.wb.name; t.blur(); } });
     t.addEventListener('blur', () => this.grid.focus());
     document.getElementById('add-sheet').addEventListener('click', () => this.cmd('addSheet'));
@@ -1212,7 +1294,7 @@ export const COMMANDS = {
   randomize: app => app.tx('Acak rentang', () => io.shuffleRange(app, sel1(app))),
   print: (app, opts) => PR.printDialog(app, opts),
   repeat: app => { const a = app.lastAction; if (a) COMMANDS[a[0]](app, ...a.slice(1)); },
-  newDoc: (app, tpl = 'blank') => { app.save(); const t = TEMPLATES.find(x => x.id === tpl) || TEMPLATES[0]; app.openWorkbook(t.build()); },
+  newDoc: (app, tpl = 'blank') => { app.saveBeforeSwitch(); const t = TEMPLATES.find(x => x.id === tpl) || TEMPLATES[0]; app.openWorkbook(t.build()); },
   makeCopy: app => { app.save(); const wb = Workbook.fromJSON(app.wb.toJSON()); wb.id = uid('wb'); wb.lock = app.wb.lock; wb.name = 'Salinan dari ' + app.wb.name; app.openWorkbook(wb); toast('Salinan dibuat'); },
   setLocale: (app, id) => app.tx('Lokal', () => { app.wb.hist.touchWb(); app.wb.settings.locale = id; setLocale(id); app.grid.measureCache.clear(); }),
   defaultFont: (app, ff, fs) => app.tx('Font default', () => { app.wb.settings.font = ff; app.wb.settings.fontSize = fs; app.wb.dirty = true; app.grid.measureCache.clear(); }),

@@ -48,7 +48,11 @@ export async function listDocs() {
   let all;
   if (!db) all = [...mem.docs.values()];
   else all = await tx('docs', 'readonly', s => reqP(s.getAll()));
-  return all.map(d => ({ id: d.id, name: d.name, updated: d.updated, sheets: d.sheets, share: d.share ? d.share.role : null, locked: !!d.lock })).sort((a, b) => b.updated - a.updated);
+  const meta = readMeta().d;
+  return all.map(d => {
+    const x = meta[d.id] || {};
+    return { id: d.id, name: d.name, updated: d.updated, sheets: d.sheets, share: d.share ? d.share.role : null, locked: !!d.lock, fav: !!x.f, color: LABELS.some(L => L.id === x.c) ? x.c : null, trashed: x.t || null };
+  }).sort((a, b) => b.updated - a.updated);
 }
 export async function deleteDoc(id) {
   if (!db) { mem.docs.delete(id); mem.versions = mem.versions.filter(v => v.doc !== id); return; }
@@ -59,6 +63,80 @@ export async function deleteDoc(id) {
 
 export function lastDoc() { try { return localStorage.getItem('as.lastDoc'); } catch { return null; } }
 export function setLastDoc(id) { try { localStorage.setItem('as.lastDoc', id); } catch { /* ignore */ } }
+
+// ---------- file list: favourites, colour categories, trash ----------
+// Kept beside the documents in one small localStorage value instead of inside the IndexedDB records:
+// starring a file or moving it to the trash must not rewrite a whole workbook (the portal syncs every
+// record as one big file), and the autosave of an open workbook rewrites its record without these fields.
+// as.docmeta = { d: { <doc id>: { f: 1 favourite, c: colour id, t: moved to the trash at (ms) } }, l: { <colour id>: label } }
+const META = 'as.docmeta';
+export const TRASH_DAYS = 30;
+const DAY = 86400000;
+export const LABELS = [
+  { id: 'red', name: 'Merah', c: '#e5484d' },
+  { id: 'orange', name: 'Oranye', c: '#f2711c' },
+  { id: 'yellow', name: 'Kuning', c: '#e0a800' },
+  { id: 'green', name: 'Hijau', c: '#2e9d5b' },
+  { id: 'teal', name: 'Toska', c: '#0f9ba0' },
+  { id: 'blue', name: 'Biru', c: '#2f6fe4' },
+  { id: 'purple', name: 'Ungu', c: '#8a4fd8' },
+  { id: 'gray', name: 'Abu-abu', c: '#7c838c' },
+];
+let memMeta = null;   // localStorage unavailable (private mode, blocked storage)
+export function readMeta() {
+  let m = memMeta;
+  try { m = JSON.parse(localStorage.getItem(META) || 'null'); } catch { /* keep memMeta */ }
+  if (!m || typeof m !== 'object') m = {};
+  if (!m.d || typeof m.d !== 'object') m.d = {};
+  if (!m.l || typeof m.l !== 'object') m.l = {};
+  return m;
+}
+function writeMeta(m) {
+  for (const [id, x] of Object.entries(m.d)) if (!x || (!x.f && !x.c && !x.t)) delete m.d[id];
+  for (const [k, v] of Object.entries(m.l)) if (!v) delete m.l[k];
+  memMeta = m;
+  try { localStorage.setItem(META, JSON.stringify(m)); } catch { /* memory only */ }
+  try { dispatchEvent(new CustomEvent('as:docmeta')); } catch { /* ignore */ }
+}
+export const docMeta = id => readMeta().d[id] || {};
+export function setDocMeta(id, patch) {
+  const m = readMeta();
+  const x = { ...(m.d[id] || {}) };
+  for (const [k, v] of Object.entries(patch)) { if (v == null || v === false) delete x[k]; else x[k] = v; }
+  m.d[id] = x;
+  writeMeta(m);
+}
+export const isTrashed = id => !!docMeta(id).t;
+export const labelColor = cid => LABELS.find(x => x.id === cid)?.c || null;
+export const labelName = (cid, m = readMeta()) => m.l[cid] || LABELS.find(x => x.id === cid)?.name || '';
+export function setLabelNames(map) {
+  const m = readMeta();
+  for (const L of LABELS) { const v = String(map[L.id] ?? '').trim().slice(0, 40); if (v && v !== L.name) m.l[L.id] = v; else delete m.l[L.id]; }
+  writeMeta(m);
+}
+export const trashDoc = id => setDocMeta(id, { t: Date.now() });
+export const restoreDoc = id => setDocMeta(id, { t: null });
+// days left before a trashed file goes for good (0 = today)
+export const trashDaysLeft = (t, now = Date.now()) => Math.max(0, Math.ceil((t + TRASH_DAYS * DAY - now) / DAY));
+export async function deleteForever(id) {
+  await deleteDoc(id);
+  const m = readMeta(); delete m.d[id]; writeMeta(m);
+}
+// Files that sat in the trash for 30 days are deleted for good (startup and whenever the file list opens).
+export async function purgeTrash(now = Date.now()) {
+  const old = Object.entries(readMeta().d).filter(([, x]) => x.t && now - x.t >= TRASH_DAYS * DAY).map(([id]) => id);
+  for (const id of old) { try { await deleteDoc(id); } catch (e) { console.warn('purge', id, e); } }
+  if (old.length) { const m = readMeta(); for (const id of old) delete m.d[id]; writeMeta(m); }
+  return old.length;
+}
+// Rename a stored workbook that is not open here (the open one is renamed through the app).
+export async function renameDoc(id, name) {
+  if (!db) { const rec = mem.docs.get(id); if (rec) { rec.name = name; rec.json = { ...rec.json, name }; } return; }
+  await tx('docs', 'readwrite', async s => {
+    const rec = await reqP(s.get(id));
+    if (rec) { rec.name = name; rec.json = { ...rec.json, name }; s.put(rec); }
+  });
+}
 
 // ---------- versions ----------
 const lastVersionAt = new Map();
