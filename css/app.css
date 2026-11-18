@@ -65,6 +65,7 @@
   --sw-classic: linear-gradient(135deg, #f8fafd, #e8eaed);
   --sw-excel: linear-gradient(135deg, #217346, #e6f2ea);
   --sw-graphite: linear-gradient(135deg, #2a2b2e, #45474b);
+  --sw-cokelat: linear-gradient(135deg, #7a4a26 0%, #b07a4a 48%, #f6ead6 100%);
   color-scheme: light;
 }
 
@@ -87,6 +88,38 @@
   --g-sel: rgba(33, 115, 70, .10);
   --sheen: none;
 }
+
+/* Cokelat Hangat: brown chrome on a latte desk, the sheet itself a warm cream paper */
+:root[data-theme="cokelat"] {
+  --wall: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .27 0 0 0 0 .13 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+          radial-gradient(1100px 760px at 6% -12%, #f1d6b2 0%, transparent 60%),
+          radial-gradient(900px 700px at 100% 0%, #ecd3b0 0%, transparent 55%),
+          radial-gradient(900px 900px at 60% 120%, #e3bf96 0%, transparent 55%),
+          linear-gradient(180deg, #f3e9da, #eadcc7);
+  --blob1: #dcae76; --blob2: #c99463; --blob3: #ecc79a; --blob4: #b88a5e;
+  --glass: rgba(255, 248, 237, .62);
+  --glass-strong: rgba(255, 250, 242, .88);
+  --glass-solid: #fffaf1;
+  --glass-border: rgba(255, 246, 232, .78);
+  --glass-edge: rgba(92, 58, 26, .14);
+  --glass-hi: inset 0 1px 0 rgba(255, 252, 244, .95), inset 0 -1px 0 rgba(255, 246, 230, .35), inset 0 0 0 1px rgba(255, 248, 236, .25);
+  --glass-shadow: 0 1px 2px rgba(70, 40, 15, .06), 0 10px 30px -8px rgba(70, 40, 15, .20);
+  --sheen: linear-gradient(180deg, rgba(255, 252, 245, .55), rgba(255, 252, 245, 0) 42%);
+  --text: #35261a; --text-2: #6e5643; --text-3: #9a8370;
+  --line: rgba(84, 54, 28, .17); --line-2: rgba(84, 54, 28, .09);
+  --hover: rgba(110, 70, 30, .07); --press: rgba(110, 70, 30, .12);
+  --accent: #8a5528; --accent-2: #f1e0c8; --accent-text: #fffaf2;
+  --on: rgba(138, 85, 40, .14); --menu-hover: rgba(138, 85, 40, .10); --kbd: rgba(110, 70, 30, .08);
+  --inp-bg: rgba(255, 250, 241, .78); --btn-bg: rgba(255, 247, 234, .6);
+  --g-bg: #fdf7ec;           /* cream paper */
+  --g-line: #ebdfca;         /* tan ruling */
+  --g-hdr: #eedfc6; --g-hdr-text: #5a3f28; --g-hdr-line: #d4bf9e; --g-hdr-edge: #ad8f68;
+  --g-hdr-sel: #e0c193; --g-hdr-sel-text: #5a3008; --g-hdr-all: #8a5528;
+  --g-text: #2e2116; --g-sel: rgba(138, 85, 40, .11); --g-freeze: #cdb390; --g-link: #a0501a;
+  --chart-text: #4a3726; --chart-grid: rgba(90, 58, 28, .13); --chart-bg: #fdf7ec;
+}
+:root[data-theme="cokelat"] .grid-wrap { box-shadow: 0 0 0 1px rgba(120, 80, 40, .22), 0 1px 2px rgba(70, 40, 15, .08), 0 14px 32px -14px rgba(70, 40, 15, .35); }
+:root[data-theme="cokelat"] .blob { opacity: .42; }
 
 :root[data-theme="classic"] {
   --wall: linear-gradient(180deg, #f9fbfd, #f9fbfd);
@@ -708,10 +741,42 @@ body:has(#dialogs > .dlg-back) #popups { z-index: 75; }   /* menus opened from a
 .fn-sig b { font-family: var(--font); }
 .fn-desc { color: var(--text-2); font-size: 12.5px; margin-top: 2px; padding-right: 110px; }
 .fn-cat { position: absolute; right: 10px; top: 9px; font-size: 11px; color: var(--text-3); }
-.keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px 28px; }
+/* Pintasan keyboard */
+.dlg-keys .dlg-body { padding-top: 4px; }
+.keys-wrap { display: flex; flex-direction: column; gap: 10px; }
+.keys-top { display: flex; gap: 10px; align-items: center; position: sticky; top: 0; z-index: 2; padding: 4px 0 6px; background: linear-gradient(var(--glass-strong) 75%, transparent); }
+.keys-search { flex: 1; min-width: 0; }
+.keys-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--text-2); }
+.keys-tip { margin: -2px 0 2px; }
+.keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px 28px; align-items: start; }
+.keys h4 { margin: 0 0 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
 .keys table { width: 100%; border-collapse: collapse; }
-.keys td { padding: 4px 0; border-bottom: 1px solid var(--line-2); font-size: 12.5px; }
+.keys td { padding: 5px 0; border-bottom: 1px solid var(--line-2); font-size: 12.5px; vertical-align: middle; }
+.keys td:first-child { padding-right: 10px; }
 .keys td:last-child { text-align: right; white-space: nowrap; }
+.kc-alts, .kc { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+.kc-chord { display: inline-flex; gap: 2px; }
+.kc-chord kbd { min-width: 22px; text-align: center; padding: 1px 5px; font-size: 11.5px; color: var(--text); }
+.kc-then, .kc-or { font-size: 11px; color: var(--text-3); }
+.kc-or { margin: 0 2px; }
+.keys-menu { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 10px; }
+.keys-menu summary { cursor: pointer; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; list-style: none; }
+.keys-menu summary::-webkit-details-marker { display: none; }
+.keys-menu summary h4 { display: inline-flex; align-items: center; gap: 4px; }
+.keys-menu summary h4::before { content: '▸'; font-size: 11px; transition: transform .15s; }
+.keys-menu[open] summary h4::before { transform: rotate(90deg); }
+.keys-menu table { margin-top: 6px; }
+.kp { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.kp-sep { color: var(--text-3); }
+.keys-none { grid-column: 1 / -1; text-align: center; padding: 24px 0; }
+@media (max-width: 640px) { .keys { grid-template-columns: minmax(0, 1fr); } .keys td:last-child { white-space: normal; } }
+
+/* access letters (menus opened from the keyboard, ⌃⌥ / Alt held, keyboard dialogs) */
+u.acc { text-decoration: none; }
+.menu.acc u.acc, body.acc-keys .menubar u.acc, body.acc-keys .menu u.acc, .dlg u.acc { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
+.mi-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-hint { margin: 2px 0 0; line-height: 1.6; }
+.ps-hint kbd { font-size: 10.5px; }
 .about { text-align: center; }
 .about h3 { margin: 6px 0 2px; font-size: 18px; }
 .about-list { text-align: left; color: var(--text-2); line-height: 1.7; padding-left: 20px; }

@@ -1,10 +1,11 @@
 // Toolbar with state sync and responsive overflow.
 import { el, icon } from '../util.js';
-import { openMenu, popup, pickColor, colorGrid, closeMenus } from './ui.js';
+import { openMenu, popup, pickColor, colorGrid, closeMenus, gridKeys } from './ui.js';
 import { numberFormatItems, functionItems } from './menus.js';
 import { L } from '../format.js';
 import * as D from './dialogs.js';
 import * as io from '../io.js';
+import { K, tip } from '../keys.js';
 
 export const THEME_FONTS = ['Arial', 'Calibri', 'Inter', 'Roboto', 'Lato', 'Montserrat', 'Open Sans', 'Poppins', 'Nunito', 'Source Sans 3', 'Merriweather', 'Playfair Display', 'Georgia', 'Times New Roman', 'Roboto Mono', 'Courier New', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Comic Sans MS'];
 const GOOGLE = new Set(['Inter', 'Roboto', 'Lato', 'Montserrat', 'Open Sans', 'Poppins', 'Nunito', 'Source Sans 3', 'Merriweather', 'Playfair Display', 'Roboto Mono']);
@@ -19,9 +20,25 @@ export function ensureFont(name, app) {
 
 const SIZES = [6, 7, 8, 9, 10, 11, 12, 14, 18, 24, 36, 48, 72];
 const BORDER_TYPES = [
-  ['all', 'border_all', 'Semua batas'], ['inner', 'border_inner', 'Batas dalam'], ['horizontal', 'border_horizontal', 'Batas horizontal'], ['vertical', 'border_vertical', 'Batas vertikal'], ['outer', 'border_outer', 'Batas luar'],
-  ['left', 'border_left', 'Batas kiri'], ['top', 'border_top', 'Batas atas'], ['right', 'border_right', 'Batas kanan'], ['bottom', 'border_bottom', 'Batas bawah'], ['clear', 'border_clear', 'Hapus batas'],
+  ['all', 'border_all', 'Semua batas', 'borderAll'], ['inner', 'border_inner', 'Batas dalam'], ['horizontal', 'border_horizontal', 'Batas horizontal'], ['vertical', 'border_vertical', 'Batas vertikal'], ['outer', 'border_outer', 'Batas luar', 'borderOuter'],
+  ['left', 'border_left', 'Batas kiri', 'borderLeft'], ['top', 'border_top', 'Batas atas', 'borderTop'], ['right', 'border_right', 'Batas kanan', 'borderRight'], ['bottom', 'border_bottom', 'Batas bawah', 'borderBottom'], ['clear', 'border_clear', 'Hapus batas', 'borderClear'],
 ];
+const VALIGN = [['top', 'vertical_align_top', 'Atas'], ['middle', 'vertical_align_center', 'Tengah'], ['bottom', 'vertical_align_bottom', 'Bawah']];
+const HALIGN = [['left', 'format_align_left', 'Kiri', 'alignLeft'], ['center', 'format_align_center', 'Tengah', 'alignCenter'], ['right', 'format_align_right', 'Kanan', 'alignRight']];
+const WRAPS = [['overflow', 'format_overline', 'Luapan'], ['wrap', 'wrap_text', 'Kemas'], ['clip', 'content_cut', 'Potong']];
+const ROTS = [[0, 'text_rotation_none', 'Tidak ada'], [45, 'text_rotate_up', 'Miring ke atas'], [-45, 'text_rotation_down', 'Miring ke bawah'], ['v', 'text_rotate_vertical', 'Vertikal'], [90, 'text_rotation_angleup', 'Putar ke atas'], [-90, 'text_rotation_angledown', 'Putar ke bawah']];
+// the selection touches merged cells (the merge button then splits them again)
+export const selMerged = app => app.ranges().some(g => app.sheet.merges.some(m => m.r1 <= g.r2 && m.r2 >= g.r1 && m.c1 <= g.c2 && m.c2 >= g.c1));
+export function mergeItems(app) {
+  const multi = () => app.ranges().some(g => g.r1 !== g.r2 || g.c1 !== g.c2);
+  return [
+    { label: 'Gabungkan semua', icon: 'cell_merge', kid: 'mergeToggle', disabled: () => !multi(), run: () => app.cmd('merge', 'all') },
+    { label: 'Gabungkan secara vertikal', icon: 'vertical_distribute', disabled: () => !multi(), run: () => app.cmd('merge', 'v') },
+    { label: 'Gabungkan secara horizontal', icon: 'horizontal_distribute', disabled: () => !multi(), run: () => app.cmd('merge', 'h') },
+    { sep: true },
+    { label: 'Pisahkan', icon: 'call_split', kid: 'unmerge', disabled: () => !selMerged(app), run: () => app.cmd('merge', 'none') },
+  ];
+}
 
 export function buildToolbar(app, host) {
   const M = app.MOD;
@@ -32,84 +49,82 @@ export function buildToolbar(app, host) {
     if (opts.ref) refs[opts.ref] = b;
     return b;
   };
+  const sel = () => app.sheet.styleOf(app.grid.sel.r, app.grid.sel.c);
+  const fontItems = () => [
+    { head: 'Font' },
+    ...THEME_FONTS.map(f => ({ label: f, checked: () => (sel().ff || app.defFont.ff) === f, run: () => { ensureFont(f, app); app.cmd('font', f); } })),
+  ];
   const groups = () => {
-    const sel = () => app.sheet.styleOf(app.grid.sel.r, app.grid.sel.c);
     const colorBtn = (ic, tip, prop) => {
       const bar = el('span.color-bar');
       const b = btn(el('span.ic-stack', icon(ic), bar), tip, a => pickColor(a.getBoundingClientRect(), c => app.cmd(prop === 'color' ? 'color' : 'fill', c), { value: sel()[prop] || undefined }), { ref: prop + 'Btn', caret: true });
       b._bar = bar;
       return b;
     };
-    const fontSel = el('button.tb-btn.tb-font', { type: 'button', 'data-tip': 'Font', onmousedown: e => e.preventDefault(), onclick: e => openMenu([
-      { head: 'Font' },
-      ...THEME_FONTS.map(f => ({ label: f, node: null, checked: () => (sel().ff || app.defFont.ff) === f, run: () => { ensureFont(f, app); app.cmd('font', f); } })),
-    ].map(it => (it.label && it.head === undefined ? { ...it, label: it.label } : it)), e.currentTarget.getBoundingClientRect()) }, el('span.tb-font-name', 'Arial'), icon('arrow_drop_down', 'caret'));
+    const fontSel = el('button.tb-btn.tb-font', { type: 'button', 'data-tip': tip('Font', 'fontMenu'), onmousedown: e => e.preventDefault(), onclick: e => openMenu(fontItems(), e.currentTarget.getBoundingClientRect()) }, el('span.tb-font-name', 'Arial'), icon('arrow_drop_down', 'caret'));
     refs.font = fontSel;
     const sizeInp = el('input.tb-size', { type: 'text', inputMode: 'numeric', value: '10', 'aria-label': 'Ukuran font' });
     sizeInp.addEventListener('keydown', e => { if (e.key === 'Enter') { const v = parseFloat(sizeInp.value); if (v > 0 && v < 400) app.cmd('fontSize', v); app.grid.focus(); } if (e.key === 'Escape') app.grid.focus(); });
     sizeInp.addEventListener('focus', () => { sizeInp.select(); openMenu(SIZES.map(s => ({ label: String(s), run: () => app.cmd('fontSize', s) })), sizeInp.getBoundingClientRect()); });
     refs.size = sizeInp;
-    const zoomBtn = el('button.tb-btn.tb-zoom', { type: 'button', 'data-tip': 'Zoom', onmousedown: e => e.preventDefault(), onclick: e => openMenu(['Sesuaikan', 50, 75, 90, 100, 125, 150, 200].map(z => (z === 'Sesuaikan' ? { label: 'Sesuaikan lebar', run: () => fitZoom(app) } : { label: z + '%', checked: () => Math.round(app.grid.z * 100) === z, run: () => app.setZoom(z / 100) })), e.currentTarget.getBoundingClientRect()) }, el('span.tb-zoom-val', '100%'), icon('arrow_drop_down', 'caret'));
+    const zoomBtn = el('button.tb-btn.tb-zoom', { type: 'button', 'data-tip': `Zoom|${K('zoomIn')} / ${K('zoomOut')}`, onmousedown: e => e.preventDefault(), onclick: e => openMenu(['Sesuaikan', 50, 75, 90, 100, 125, 150, 200].map(z => (z === 'Sesuaikan' ? { label: 'Sesuaikan lebar', run: () => fitZoom(app) } : { label: z + '%', checked: () => Math.round(app.grid.z * 100) === z, run: () => app.setZoom(z / 100) })), e.currentTarget.getBoundingClientRect()) }, el('span.tb-zoom-val', '100%'), icon('arrow_drop_down', 'caret'));
     refs.zoom = zoomBtn;
     return [
       { id: 'hist', pri: 0, items: [
-        btn('undo', `Urungkan|${M}+Z`, () => app.undo(), { ref: 'undo' }),
-        btn('redo', `Ulangi|${M}+Y`, () => app.redo(), { ref: 'redo' }),
-        btn('print', `Cetak|${M}+P`, () => io.printView(app)),
-        btn('format_paint', 'Format cat', () => app.cmd('paintFormat'), { ref: 'paint' }),
+        btn('undo', tip('Urungkan', 'undo'), () => app.undo(), { ref: 'undo' }),
+        btn('redo', tip('Ulangi', 'redo'), () => app.redo(), { ref: 'redo' }),
+        btn('print', tip('Cetak', 'print'), () => io.printView(app)),
+        btn('format_paint', tip('Format cat', 'paintFormat'), () => app.cmd('paintFormat'), { ref: 'paint' }),
       ] },
       { id: 'zoom', pri: 5, items: [zoomBtn] },
       { id: 'num', pri: 1, items: [
-        btn(el('span.tb-text', L.cur), 'Format sebagai mata uang', () => app.cmd('numberFormat', '"' + L.cur + '"#,##0.00')),
-        btn('percent', 'Format sebagai persen', () => app.cmd('numberFormat', '0.00%')),
-        btn(el('span.tb-text.dec', '.0', icon('arrow_back', 'tiny')), 'Kurangi tempat desimal', () => app.cmd('decimals', -1)),
-        btn(el('span.tb-text.dec', '.00', icon('arrow_forward', 'tiny')), 'Tambah tempat desimal', () => app.cmd('decimals', 1)),
-        btn(el('span.tb-text', '123'), 'Format lainnya', a => openMenu(numberFormatItems(app), a.getBoundingClientRect()), { caret: true }),
+        btn(el('span.tb-text', L.cur), tip('Format sebagai mata uang', 'fmtCurrency'), () => app.cmd('numberFormat', '"' + L.cur + '"#,##0.00')),
+        btn('percent', tip('Format sebagai persen', 'fmtPercent'), () => app.cmd('numberFormat', '0.00%')),
+        btn(el('span.tb-text.dec', '.0', icon('arrow_back', 'tiny')), tip('Kurangi tempat desimal', 'decLess'), () => app.cmd('decimals', -1)),
+        btn(el('span.tb-text.dec', '.00', icon('arrow_forward', 'tiny')), tip('Tambah tempat desimal', 'decMore'), () => app.cmd('decimals', 1)),
+        btn(el('span.tb-text', '123'), tip('Format angka lainnya', 'numMenu'), a => openMenu(numberFormatItems(app), a.getBoundingClientRect()), { caret: true, ref: 'num' }),
       ] },
       { id: 'font', pri: 2, items: [fontSel] },
       { id: 'size', pri: 2, items: [
-        btn('remove', 'Kurangi ukuran font', () => { const s = sel().fs || app.defFont.fs; app.cmd('fontSize', Math.max(1, s - 1)); }, { cls: 'sm' }),
+        btn('remove', tip('Kurangi ukuran font', 'fontSmaller'), () => { const s = sel().fs || app.defFont.fs; app.cmd('fontSize', Math.max(1, s - 1)); }, { cls: 'sm' }),
         sizeInp,
-        btn('add', 'Tambah ukuran font', () => { const s = sel().fs || app.defFont.fs; app.cmd('fontSize', s + 1); }, { cls: 'sm' }),
+        btn('add', tip('Tambah ukuran font', 'fontBigger'), () => { const s = sel().fs || app.defFont.fs; app.cmd('fontSize', s + 1); }, { cls: 'sm' }),
       ] },
       { id: 'text', pri: 0, items: [
-        btn('format_bold', `Tebal|${M}+B`, () => app.cmd('toggleStyle', 'b'), { ref: 'b' }),
-        btn('format_italic', `Miring|${M}+I`, () => app.cmd('toggleStyle', 'i'), { ref: 'i' }),
-        btn('strikethrough_s', 'Coret|Alt+Shift+5', () => app.cmd('toggleStyle', 's'), { ref: 's' }),
-        btn('format_underlined', `Garis bawah|${M}+U`, () => app.cmd('toggleStyle', 'u'), { ref: 'u' }),
-        colorBtn('format_color_text', 'Warna teks', 'color'),
+        btn('format_bold', tip('Tebal', 'bold'), () => app.cmd('toggleStyle', 'b'), { ref: 'b' }),
+        btn('format_italic', tip('Miring', 'italic'), () => app.cmd('toggleStyle', 'i'), { ref: 'i' }),
+        btn('strikethrough_s', tip('Coret', 'strike', 2), () => app.cmd('toggleStyle', 's'), { ref: 's' }),
+        btn('format_underlined', tip('Garis bawah', 'underline'), () => app.cmd('toggleStyle', 'u'), { ref: 'u' }),
+        colorBtn('format_color_text', tip('Warna teks', 'textColor'), 'color'),
       ] },
       { id: 'cell', pri: 1, items: [
-        colorBtn('format_color_fill', 'Warna isian', 'bg'),
-        btn('border_all', 'Batas', a => bordersPopup(app, a), { caret: true }),
-        btn('cell_merge', 'Gabungkan sel', () => app.cmd('merge', 'all'), { ref: 'merge' }),
-        btn('arrow_drop_down', 'Jenis penggabungan', a => openMenu([
-          { label: 'Gabungkan semua', run: () => app.cmd('merge', 'all') },
-          { label: 'Gabungkan secara vertikal', run: () => app.cmd('merge', 'v') },
-          { label: 'Gabungkan secara horizontal', run: () => app.cmd('merge', 'h') },
-          { label: 'Pisahkan', run: () => app.cmd('merge', 'none') },
-        ], a.getBoundingClientRect()), { cls: 'narrow' }),
+        colorBtn('format_color_fill', tip('Warna isian', 'fillColor'), 'bg'),
+        btn('border_all', tip('Batas', 'bordersMenu'), a => bordersPopup(app, a), { caret: true, ref: 'borders' }),
+        // a toggle like in Google Sheets / Excel: lit while the selection has merged cells, a click splits them
+        btn('cell_merge', tip('Gabungkan sel', 'mergeToggle'), () => app.cmd('mergeToggle'), { ref: 'merge' }),
+        btn('arrow_drop_down', `Jenis penggabungan|${K('mergeToggle')} gabung · ${K('unmerge')} pisah`, a => openMenu(mergeItems(app), a.getBoundingClientRect()), { cls: 'narrow' }),
       ] },
       { id: 'align', pri: 1, items: [
-        btn('format_align_left', 'Perataan horizontal', a => iconMenu(a, [['left', 'format_align_left', 'Kiri'], ['center', 'format_align_center', 'Tengah'], ['right', 'format_align_right', 'Kanan']], v => app.cmd('align', v), sel().ha || 'left'), { caret: true, ref: 'ha' }),
-        btn('vertical_align_bottom', 'Perataan vertikal', a => iconMenu(a, [['top', 'vertical_align_top', 'Atas'], ['middle', 'vertical_align_center', 'Tengah'], ['bottom', 'vertical_align_bottom', 'Bawah']], v => app.cmd('valign', v), sel().va || 'bottom'), { caret: true, ref: 'va' }),
-        btn('wrap_text', 'Pengemasan teks', a => iconMenu(a, [['overflow', 'format_overline', 'Luapan'], ['wrap', 'wrap_text', 'Kemas'], ['clip', 'content_cut', 'Potong']], v => app.cmd('wrap', v), sel().wrap || 'overflow'), { caret: true, ref: 'wrap' }),
-        btn('text_rotate_up', 'Rotasi teks', a => iconMenu(a, [[0, 'text_rotation_none', 'Tidak ada'], [45, 'text_rotate_up', 'Miring ke atas'], [-45, 'text_rotation_down', 'Miring ke bawah'], ['v', 'text_rotate_vertical', 'Vertikal'], [90, 'text_rotation_angleup', 'Putar ke atas'], [-90, 'text_rotation_angledown', 'Putar ke bawah']], v => app.cmd('rotate', v), sel().rot || 0), { caret: true }),
+        btn('format_align_left', `Perataan horizontal|${K('alignLeft')} / ${K('alignCenter')} / ${K('alignRight')}`, a => iconMenu(a, HALIGN.map(x => [x[0], x[1], tip(x[2], x[3])]), v => app.cmd('align', v), sel().ha || 'left'), { caret: true, ref: 'ha' }),
+        btn('vertical_align_bottom', tip('Perataan vertikal', 'valignMenu'), a => iconMenu(a, VALIGN, v => app.cmd('valign', v), sel().va || 'bottom'), { caret: true, ref: 'va' }),
+        btn('wrap_text', tip('Pengemasan teks', 'wrap'), a => iconMenu(a, WRAPS, v => app.cmd('wrap', v), sel().wrap || 'overflow'), { caret: true, ref: 'wrap' }),
+        btn('text_rotate_up', tip('Rotasi teks', 'rotateMenu'), a => iconMenu(a, ROTS, v => app.cmd('rotate', v), sel().rot || 0), { caret: true, ref: 'rot' }),
       ] },
       { id: 'insert', pri: 3, items: [
-        btn('link', `Sisipkan link|${M}+K`, () => D.linkDialog(app)),
-        btn('add_comment', 'Sisipkan catatan|Shift+F2', () => D.noteDialog(app)),
-        btn('insert_chart', 'Sisipkan diagram', () => app.sidebar.open('chart', { create: true })),
-        btn('signature', 'Sisipkan tanda tangan', () => app.images.insertDialog()),
-        btn('filter_alt', `Buat filter|${M}+Shift+F`, () => app.cmd('toggleFilter'), { ref: 'filter' }),
-        btn('table_chart', 'Warna bergantian / Format sebagai tabel', () => app.sidebar.open('banding')),
-        btn('functions', 'Fungsi', a => openMenu(functionItems(app), a.getBoundingClientRect()), { caret: true }),
+        btn('link', tip('Sisipkan link', 'link'), () => D.linkDialog(app)),
+        btn('add_comment', tip('Sisipkan catatan', 'note'), () => D.noteDialog(app)),
+        btn('insert_chart', tip('Sisipkan diagram', 'chart'), () => app.sidebar.open('chart', { create: true })),
+        btn('signature', tip('Sisipkan tanda tangan', 'signature'), () => app.images.insertDialog()),
+        btn('filter_alt', tip('Buat filter', 'filter'), () => app.cmd('toggleFilter'), { ref: 'filter' }),
+        btn('table_chart', tip('Warna bergantian / Format sebagai tabel', 'banding'), () => app.sidebar.open('banding')),
+        btn('functions', `Fungsi|${K('autosum')} SUM · ${K('function')} semua`, a => openMenu(functionItems(app), a.getBoundingClientRect()), { caret: true }),
       ] },
       { id: 'excel', pri: 4, items: [
-        btn('format_color_fill', 'Format bersyarat', () => app.sidebar.open('cf'), { cls: 'cf' }),
-        btn('rule', 'Validasi data', () => app.sidebar.open('dv')),
-        btn('pivot_table_chart', 'Tabel pivot', () => D.pivotDialog(app)),
-        btn('search', `Cari dan ganti|${M}+H`, () => D.replaceDialog(app, true)),
+        btn('format_color_fill', tip('Format bersyarat', 'cf'), () => app.sidebar.open('cf'), { cls: 'cf' }),
+        btn('rule', tip('Validasi data', 'dv'), () => app.sidebar.open('dv')),
+        btn('pivot_table_chart', tip('Tabel pivot', 'pivot'), () => D.pivotDialog(app)),
+        btn('search', tip('Cari dan ganti', 'replace'), () => D.replaceDialog(app, true)),
+        btn('keyboard', tip('Pintasan keyboard', 'shortcuts'), () => D.shortcutsDialog(app)),
       ] },
     ];
   };
@@ -131,7 +146,7 @@ export function buildToolbar(app, host) {
       const box = el('div.tb-overflow', ...extra.map(g => el('div.tb-group', ...g.items)));
       popup(box, e.currentTarget.getBoundingClientRect(), { alignRight: true });
     } }, icon('more_vert'));
-    const right = el('div.tb-right', btn('keyboard_arrow_up', 'Sembunyikan menu', () => { document.body.classList.toggle('compact'); app.grid.resize(); }, { cls: 'collapse' }));
+    const right = el('div.tb-right', btn('keyboard_arrow_up', tip('Sembunyikan menu', 'compact'), () => { document.body.classList.toggle('compact'); app.grid.resize(); }, { cls: 'collapse' }));
     host.append(wrap, more, right);
     fit();
   };
@@ -166,7 +181,13 @@ export function buildToolbar(app, host) {
       refs.redo?.toggleAttribute('disabled', !app.wb.hist.redoS.length);
       refs.filter?.classList.toggle('on', !!sh.filter);
       refs.paint?.classList.toggle('on', !!app.painter);
-      refs.merge?.classList.toggle('on', !!sh.mergeAt(g.sel.r, g.sel.c));
+      if (refs.merge) {
+        const on = selMerged(app);
+        refs.merge.classList.toggle('on', on);
+        refs.merge.dataset.tip = tip(on ? 'Pisahkan sel' : 'Gabungkan sel', 'mergeToggle');
+        refs.merge.setAttribute('aria-label', on ? 'Pisahkan sel' : 'Gabungkan sel');
+        refs.merge.setAttribute('aria-pressed', String(on));
+      }
       if (refs.font) refs.font.querySelector('.tb-font-name').textContent = st.ff || app.defFont.ff;
       if (refs.size && document.activeElement !== refs.size) refs.size.value = String(st.fs || app.defFont.fs);
       if (refs.zoom) refs.zoom.querySelector('.tb-zoom-val').textContent = Math.round(g.z * 100) + '%';
@@ -181,18 +202,44 @@ export function buildToolbar(app, host) {
       if (st.ff) ensureFont(st.ff, app);
     },
     render,
+    // Keyboard shortcuts (keys.js) open a toolbar dropdown as a menu that arrows / letters / Enter can drive,
+    // at its button when the button is on screen, else at the active cell.
+    open(name) {
+      const at = b => (b && b.offsetParent && b.getBoundingClientRect().width ? b.getBoundingClientRect() : app.cellAnchor());
+      const kb = { keyboard: true };
+      const list = (opts, cmd, cur) => opts.map(([v, ic, label]) => ({ label, icon: ic, checked: () => cur() === v, run: () => app.cmd(cmd, v) }));
+      switch (name) {
+        case 'font': return openMenu(fontItems(), at(refs.font), kb);
+        case 'num': return openMenu(numberFormatItems(app), at(refs.num), kb);
+        case 'valign': return openMenu(list(VALIGN, 'valign', () => sel().va || 'bottom'), at(refs.va), kb);
+        case 'rotate': return openMenu(list(ROTS, 'rotate', () => sel().rot || 0), at(refs.rot), kb);
+        case 'color': case 'bg': {
+          const prop = name === 'color' ? 'color' : 'bg';
+          const p = pickColor(at(refs[prop + 'Btn']), c => { app.cmd(name === 'color' ? 'color' : 'fill', c); app.grid.focus(); }, { value: sel()[prop] || undefined });
+          p.el.querySelector('.cp-sw')?.focus();
+          return p;
+        }
+        case 'borders': {
+          const p = bordersPopup(app, refs.borders, at(refs.borders));
+          p.el.querySelector('.border-grid .tb-btn')?.focus();
+          return p;
+        }
+      }
+    },
   };
   return api;
 }
 
 function iconMenu(anchor, opts, onPick, current) {
   const box = el('div.icon-menu', ...opts.map(([v, ic, label]) => el('button.tb-btn' + (v === current ? '.on' : ''), { type: 'button', 'data-tip': label, onclick: () => { closeMenus(); onPick(v); } }, icon(ic))));
+  gridKeys(box, '.tb-btn', opts.length);
   popup(box, anchor.getBoundingClientRect());
 }
 
-function bordersPopup(app, anchor) {
+function bordersPopup(app, anchor, rect = anchor.getBoundingClientRect()) {
   let color = app.lastBorder?.color || '#000000', style = app.lastBorder?.style || 'solid', w = app.lastBorder?.w || 1;
-  const grid = el('div.border-grid', ...BORDER_TYPES.map(([t, ic, label]) => el('button.tb-btn', { type: 'button', 'data-tip': label, onclick: () => { closeMenus(); app.cmd('borders', t, { color, style, w }); } }, icon(ic))));
+  const grid = el('div.border-grid', ...BORDER_TYPES.map(([t, ic, label, id]) => el('button.tb-btn', { type: 'button', 'data-tip': id ? tip(label, id) : label, onclick: () => { closeMenus(); app.cmd('borders', t, { color, style, w }); } }, icon(ic))));
+  gridKeys(grid, '.tb-btn', 5);
   const colorBtn = el('button.tb-btn', { type: 'button', 'data-tip': 'Warna batas', onclick: () => {
     const inner = colorGrid(c => { color = c || '#000000'; bar.style.background = color; sub.remove(); }, { reset: false });
     const sub = el('div.menu.glass.sub-pop', inner);
@@ -214,7 +261,7 @@ function bordersPopup(app, anchor) {
     const off = e => { if (!sub.contains(e.target)) { sub.remove(); document.removeEventListener('pointerdown', off, true); } };
     setTimeout(() => document.addEventListener('pointerdown', off, true));
   } }, icon('line_style'));
-  popup(el('div.borders-pop', grid, el('div.border-side', colorBtn, styleBtn)), anchor.getBoundingClientRect());
+  return popup(el('div.borders-pop', grid, el('div.border-side', colorBtn, styleBtn)), rect);
 }
 
 function fitZoom(app) {

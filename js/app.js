@@ -1,5 +1,5 @@
 // Application shell: state, commands, keyboard, clipboard, sheet tabs, status bar, persistence.
-import { el, icon, key, keyR, keyC, addr, rangeAddr, colName, debounce, inRange, jsDateToSerial, uid, parseRange, esc } from './util.js';
+import { el, icon, key, keyR, keyC, addr, rangeAddr, colName, debounce, inRange, intersects, jsDateToSerial, uid, parseRange, esc } from './util.js';
 import { Workbook, newWorkbook, setInput, rangeCells, COL_W, ROW_H } from './model.js';
 import { setLocale, editText, L, changeDecimals, format, compile, fmtSmart } from './format.js';
 import { Grid, HH } from './grid.js';
@@ -22,6 +22,7 @@ import * as SH from './sharing.js';
 import * as PG from './pages.js';
 import * as PR from './print.js';
 import * as LK from './lock.js';
+import * as KY from './keys.js';
 import { shareKey, errText } from './live.js';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -35,6 +36,7 @@ const THEMES = [
   { id: 'classic', label: 'Klasik', dark: false },
   { id: 'excel', label: 'Hijau Excel', dark: false },
   { id: 'graphite', label: 'Grafit', dark: true },
+  { id: 'cokelat', label: 'Cokelat Hangat', dark: false },
 ];
 
 export class App {
@@ -489,6 +491,16 @@ export class App {
   }
 
   // ---------- sheets ----------
+  // screen rectangle of the active cell (menus opened from the keyboard appear there)
+  cellAnchor() {
+    const g = this.grid, rc = g.cellRect(g.sel.r, g.sel.c), hr = g.host.getBoundingClientRect();
+    return new DOMRect(hr.left + rc.x * g.z, hr.top + rc.y * g.z, rc.w * g.z, rc.h * g.z);
+  }
+  // next / previous visible sheet
+  stepSheet(dir) {
+    const n = this.wb.sheets.length;
+    for (let i = this.wb.active + dir; i >= 0 && i < n; i += dir) if (!this.wb.sheets[i].hidden) { this.switchSheet(i); return; }
+  }
   switchSheet(i, keepEdit = false) {
     if (i < 0 || i >= this.wb.sheets.length) return;
     const g = this.grid;
@@ -630,6 +642,14 @@ export class App {
     if (src === 'bar') return;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
     const sh = this.sheet;
+    // menu bar from the keyboard: ⌃⌥ + letter on a Mac, Alt + letter elsewhere
+    const menu = KY.menuFor(e);
+    if (menu) { stop(); this.openBarMenu?.(menu); return; }
+    // format painter waiting for its target: Enter paints the selection, Esc cancels
+    if (this.painter && (k === 'Enter' || k === 'Escape') && !mod) { stop(); this.painter.finish(k === 'Enter'); return; }
+    // shortcuts of keys.js with a handler below (SHORTCUT_RUN); the older ones follow
+    const sc = KY.matchShortcut(e, SHORTCUT_RUN);
+    if (sc) { stop(); SHORTCUT_RUN[sc.id](this, e); return; }
     // navigation
     const nav = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[k];
     if (nav && !e.altKey) { stop(); g.move(nav[0], nav[1], e.shiftKey, mod); return; }
@@ -1003,6 +1023,12 @@ export class App {
     document.getElementById('btn-theme').addEventListener('click', e => openMenu(this.themeMenu(), e.currentTarget.getBoundingClientRect(), { alignRight: true }));
     document.getElementById('app-logo').addEventListener('click', () => D.openDialog(this));
     document.getElementById('btn-history').addEventListener('click', () => this.sidebar.open('versions'));
+    // shortcut hints of the buttons outside the toolbar (keys.js)
+    for (const [id, label, sc] of [['btn-history', 'Histori versi', 'versions'], ['app-logo', 'Buka spreadsheet', 'open'], ['add-sheet', 'Tambahkan sheet', 'addSheet'], ['all-sheets', 'Semua sheet', 'sheetList'], ['zoom-out', 'Perkecil', 'zoomOut'], ['zoom-in', 'Perbesar', 'zoomIn']]) {
+      const b = document.getElementById(id);
+      if (b) b.dataset.tip = KY.tip(label, sc);
+    }
+    this.fx.nameBox.dataset.tip = KY.tip('Kotak nama: ketik sel atau rentang, lalu Enter', 'goto');
     window.addEventListener('beforeunload', () => { if (this.wb?.dirty) store.saveDoc(this.wb); });
     window.addEventListener('resize', () => { this.showLinkChip(); PG.breakChip(this); });
     const chipLater = debounce(() => PG.breakChip(this), 120);
@@ -1074,31 +1100,45 @@ export const COMMANDS = {
     app.tx('Desimal', () => ops.styleRanges(app, app.ranges(), s => ({ ...s, fmt: changeDecimals(s.fmt || base, d, sample) || nf })));
   },
   borders: (app, type, b) => { app.lastBorder = b || app.lastBorder; app.tx('Batas', () => ops.bordersOn(app, app.ranges(), type, b || app.lastBorder || { w: 1, style: 'solid', color: '#000000' })); },
+  // toolbar button / ⌥⇧M: a selection touching merged cells is split again, anything else is merged
+  mergeToggle: app => {
+    const sh = app.sheet, rs = app.ranges();
+    if (rs.some(g => sh.merges.some(m => intersects(m, g)))) return COMMANDS.merge(app, 'none');
+    if (rs.every(g => g.r1 === g.r2 && g.c1 === g.c2)) { toast('Pilih beberapa sel untuk digabungkan'); return; }
+    return COMMANDS.merge(app, 'all');
+  },
   merge: async (app, mode) => {
     if (mode !== 'none' && !ops.canMerge(app, app.ranges())) {
       if (!(await confirmDlg('Gabungkan sel', 'Menggabungkan sel hanya akan mempertahankan nilai paling kiri atas dan menghapus nilai lainnya.', 'OK'))) return;
     }
-    app.tx('Gabung sel', () => ops.mergeRanges(app, app.ranges(), mode));
+    app.tx(mode === 'none' ? 'Pisahkan sel' : 'Gabung sel', () => {
+      ops.mergeRanges(app, app.ranges(), mode);
+      // row heights follow: a tall merge no longer stretches its first row, split cells wrap on their own
+      const sh = app.sheet, last = sh.dataRows();
+      for (const g of app.ranges()) for (let r = g.r1; r <= Math.min(g.r2, last); r++) ops.fitRow(app, sh, r);
+    });
     app.grid.selectRange(app.grid.range, app.grid.range.r1, app.grid.range.c1);
   },
   paintFormat: app => {
+    if (app.painter) { app.painter.finish(false); return; }   // second click / shortcut: cancel
     const g = app.grid, sh = app.sheet;
     const src = { ...g.range };
     const styles = [];
     for (let r = src.r1; r <= src.r2; r++) { const row = []; for (let c = src.c1; c <= src.c2; c++) row.push(sh.styleOf(r, c)); styles.push(row); }
-    app.painter = { styles, src };
-    document.body.classList.add('painting');
-    toast('Pilih sel untuk menerapkan format', { ms: 1800 });
-    const done = () => {
+    // the target is chosen with the mouse (applied on release) or with the arrow keys + Enter (onKey)
+    const finish = apply => {
       g.scroller.removeEventListener('pointerup', done);
-      setTimeout(() => {
-        const p = app.painter; app.painter = null; document.body.classList.remove('painting');
-        if (!p) return;
-        const dest = g.range;
-        const R = Math.max(dest.r2 - dest.r1 + 1, p.styles.length), C = Math.max(dest.c2 - dest.c1 + 1, p.styles[0].length);
-        app.tx('Format cat', () => { for (let i = 0; i < R; i++) for (let j = 0; j < C; j++) app.sheet.setStyle(dest.r1 + i, dest.c1 + j, p.styles[i % p.styles.length][j % p.styles[0].length]); });
-      }, 0);
+      const p = app.painter; app.painter = null; document.body.classList.remove('painting'); app.toolbar?.sync();
+      if (!p || !apply) return;
+      const dest = g.range;
+      const R = Math.max(dest.r2 - dest.r1 + 1, p.styles.length), C = Math.max(dest.c2 - dest.c1 + 1, p.styles[0].length);
+      app.tx('Format cat', () => { for (let i = 0; i < R; i++) for (let j = 0; j < C; j++) app.sheet.setStyle(dest.r1 + i, dest.c1 + j, p.styles[i % p.styles.length][j % p.styles[0].length]); });
     };
+    const done = () => setTimeout(() => finish(true), 0);
+    app.painter = { styles, src, finish };
+    document.body.classList.add('painting');
+    app.toolbar?.sync();
+    toast('Pilih sel tujuan: klik, atau pindah dengan panah lalu Enter (Esc batal)', { ms: 2600 });
     g.scroller.addEventListener('pointerup', done);
   },
   resizeCols: (app, cols, w) => app.tx('Ubah ukuran kolom', () => ops.resizeCols(app, cols, w)),
@@ -1376,6 +1416,61 @@ export const COMMANDS = {
 };
 
 function remapStyles(dst, src) { return src.styles.map(s => dst.intern({ ...s })); }
+
+// Handlers of the keys.js shortcuts (matched in App.onKey before the older key code).
+const selCols = app => { const g = app.grid.range, out = []; for (let c = g.c1; c <= g.c2; c++) out.push(c); return out; };
+const SHORTCUT_RUN = {
+  pasteSpecial: app => D.pasteSpecialDialog(app),
+  clearAll: app => app.cmd('clear', 'all'),
+  versions: app => app.sidebar.open('versions'),
+  valignMenu: app => app.toolbar.open('valign'),
+  rotateMenu: app => app.toolbar.open('rotate'),
+  fontMenu: app => app.toolbar.open('font'),
+  numMenu: app => app.toolbar.open('num'),
+  textColor: app => app.toolbar.open('color'),
+  fillColor: app => app.toolbar.open('bg'),
+  bordersMenu: app => app.toolbar.open('borders'),
+  wrap: app => app.cmd('wrap', app.sheet.styleOf(app.grid.sel.r, app.grid.sel.c).wrap === 'wrap' ? 'overflow' : 'wrap'),
+  fontBigger: app => app.cmd('fontSize', Math.min(400, (app.sheet.styleOf(app.grid.sel.r, app.grid.sel.c).fs || app.defFont.fs) + 1)),
+  fontSmaller: app => app.cmd('fontSize', Math.max(1, (app.sheet.styleOf(app.grid.sel.r, app.grid.sel.c).fs || app.defFont.fs) - 1)),
+  mergeToggle: app => app.cmd('mergeToggle'),
+  unmerge: app => app.cmd('merge', 'none'),
+  paintFormat: app => app.cmd('paintFormat'),
+  decMore: app => app.cmd('decimals', 1),
+  decLess: app => app.cmd('decimals', -1),
+  borderTop: app => app.cmd('borders', 'top'),
+  borderRight: app => app.cmd('borders', 'right'),
+  borderBottom: app => app.cmd('borders', 'bottom'),
+  borderLeft: app => app.cmd('borders', 'left'),
+  borderClear: app => app.cmd('borders', 'clear'),
+  borderOuter: app => app.cmd('borders', 'outer'),
+  borderAll: app => app.cmd('borders', 'all'),
+  insRowAbove: app => app.cmd('insertRows', 'above'),
+  insRowBelow: app => app.cmd('insertRows', 'below'),
+  insColLeft: app => app.cmd('insertCols', 'left'),
+  insColRight: app => app.cmd('insertCols', 'right'),
+  // like Excel's Ctrl + / Ctrl −: whole rows / columns at once, a cell range asks how to shift
+  insert: app => (fullRowsSel(app) ? app.cmd('insertRows', 'above') : fullColsSel(app) ? app.cmd('insertCols', 'left') : D.insertCellsDialog(app)),
+  delete: app => (fullRowsSel(app) ? app.cmd('deleteRows') : fullColsSel(app) ? app.cmd('deleteCols') : D.deleteCellsDialog(app)),
+  hideRows: app => app.cmd('hideRows'),
+  hideCols: app => app.cmd('hideCols'),
+  autofit: app => app.cmd('autofitCols', selCols(app)),
+  function: app => D.functionListDialog(app),
+  chart: app => app.sidebar.open('chart', { create: true }),
+  signature: app => app.images.insertDialog(),
+  checkbox: app => app.cmd('insertCheckbox'),
+  dropdown: app => app.cmd('insertDropdown'),
+  banding: app => app.sidebar.open('banding'),
+  cf: app => app.sidebar.open('cf'),
+  dv: app => app.sidebar.open('dv'),
+  pivot: app => D.pivotDialog(app),
+  names: app => app.sidebar.open('names'),
+  goto: app => app.fx.nameBox.focus(),
+  nextSheet: app => app.stepSheet(1),
+  prevSheet: app => app.stepSheet(-1),
+  sheetList: app => { const b = document.getElementById('all-sheets'); openMenu(app.sheetItems(), b.offsetParent ? b.getBoundingClientRect() : app.cellAnchor(), { keyboard: true }); },
+  compact: app => { document.body.classList.toggle('compact'); app.grid.resize(); },
+};
 
 // ---------- boot ----------
 const app = new App();

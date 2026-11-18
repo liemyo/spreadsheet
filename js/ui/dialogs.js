@@ -9,8 +9,10 @@ import * as io from '../io.js';
 import * as store from '../store.js';
 import { FErr } from '../formula/core.js';
 import { THEME_FONTS, ensureFont } from './toolbar.js';
+import * as KY from '../keys.js';
+import { menus } from './menus.js';
+import { accLetters } from './ui.js';
 
-const M = () => window.amatu?.MOD || 'Ctrl';
 
 // ---------- link & note ----------
 export function linkDialog(app) {
@@ -232,19 +234,74 @@ export function customFormatDialog(app, kind) {
   });
 }
 
-export function pasteSpecialDialog(app) {
-  let mode = 'all', op = null, skip = false, tr = false;
-  const radios = (name, opts, onSel) => el('div.radios', ...opts.map(([v, lb], i) => el('label.radio', el('input', { type: 'radio', name, checked: i === 0, onchange: () => onSel(v) }), el('span', lb))));
-  dialog({
-    title: 'Tempel spesial', width: 460,
-    body: el('div.grid2',
-      el('div', el('h4', 'Tempel'), radios('ps-mode', [['all', 'Semua'], ['formulas', 'Rumus'], ['values', 'Nilai'], ['formats', 'Format'], ['valid', 'Validasi'], ['nofmt', 'Semua kecuali format'], ['widths', 'Lebar kolom']], v => (mode = v))),
-      el('div', el('h4', 'Operasi'), radios('ps-op', [[null, 'Tidak ada'], ['add', 'Tambah'], ['sub', 'Kurangi'], ['mul', 'Kalikan'], ['div', 'Bagi']], v => (op = v)),
-        el('div.checks.mt', checkbox('Lewati sel kosong', false, v => (skip = v)), checkbox('Transpos', false, v => (tr = v))))),
-    buttons: [{ label: 'Batal' }, { label: 'OK', primary: true, run: () => app.pasteFromMenu(tr ? 'transpose' : mode, { op, skipBlanks: skip }) }],
+// Text with its access letter underlined (dialog options that a key press picks)
+const accText = (t, k) => {
+  const i = k ? t.toLowerCase().indexOf(k.toLowerCase()) : -1;
+  return i < 0 ? [t] : [t.slice(0, i), el('u.acc', t[i]), t.slice(i + 1)];
+};
+// Radio options of a dialog that letters pick: [value, label, letter]
+function keyRadios(name, opts, value, onSel, keys) {
+  return el('div.radios', ...opts.map(([v, lb, k]) => {
+    const inp = el('input', { type: 'radio', name, checked: v === value, onchange: () => onSel(v) });
+    if (k) keys[k.toLowerCase()] = { inp, v, onSel };
+    return el('label.radio', inp, el('span', ...accText(lb, k)));
+  }));
+}
+// Letters inside a dialog box (no modifier, not while typing in a text box)
+function dialogLetters(box, fn) {
+  box.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || /^(text|number|search)$/.test(e.target.type) || e.target.tagName === 'TEXTAREA') return;
+    if (fn(e.key.toLowerCase())) { e.preventDefault(); e.stopPropagation(); }
   });
 }
 
+// Like Excel's Paste Special (Ctrl+Alt+V / ⌥⌘V): a letter picks the kind and pastes at once
+// (N nilai, F format, R rumus, …); the operation, "lewati sel kosong" and "transpos" letters only
+// switch their option. Enter / OK pastes with the choices, and ⌘V / Ctrl+V while the dialog is open
+// pastes the system clipboard with them (no clipboard permission needed).
+export function pasteSpecialDialog(app) {
+  let mode = 'all', op = null, skip = false, tr = false;
+  const keys = {};
+  const MODES = [['all', 'Semua', 's'], ['formulas', 'Rumus', 'r'], ['values', 'Nilai', 'n'], ['formats', 'Format', 'f'], ['valid', 'Validasi', 'v'], ['nofmt', 'Semua kecuali format', 'k'], ['widths', 'Lebar kolom', 'l']];
+  const OPS = [[null, 'Tidak ada', 'd'], ['add', 'Tambah', 'a'], ['sub', 'Kurangi', 'u'], ['mul', 'Kalikan', 'i'], ['div', 'Bagi', 'g']];
+  const modeBox = keyRadios('ps-mode', MODES, mode, v => (mode = v), keys);
+  const opBox = keyRadios('ps-op', OPS, op, v => (op = v), keys);
+  const chk = (label, k, set) => {
+    const c = el('input', { type: 'checkbox', onchange: () => set(c.checked) });
+    keys[k] = { inp: c, toggle: true };
+    return el('label.check', c, el('span', ...accText(label, k)));
+  };
+  const go = () => app.pasteFromMenu(tr ? 'transpose' : mode, { op, skipBlanks: skip });
+  const d = dialog({
+    title: 'Tempel spesial', width: 480, cls: 'dlg-ps',
+    body: el('div.stack',
+      el('div.grid2',
+        el('div', el('h4', 'Tempel'), modeBox),
+        el('div', el('h4', 'Operasi'), opBox,
+          el('div.checks.mt', chk('Lewati sel kosong', 'w', v => (skip = v)), chk('Transpos', 't', v => (tr = v))))),
+      el('p.muted.small.ps-hint', 'Tekan huruf bergaris bawah: jenis tempel langsung ditempel. ', el('kbd', 'Enter'), ' = tempel, ', el('kbd', KY.isMac ? '⌘V' : 'Ctrl+V'), ' = tempel dari papan klip dengan pilihan ini.')),
+    buttons: [{ label: 'Batal' }, { label: 'Tempel', primary: true, run: go }],
+  });
+  dialogLetters(d.el, k => {
+    const o = keys[k];
+    if (!o) return false;
+    if (o.toggle) { o.inp.checked = !o.inp.checked; o.inp.dispatchEvent(new Event('change')); o.inp.focus(); return true; }
+    o.inp.checked = true; o.onSel(o.v); o.inp.focus();
+    if (MODES.some(m => m[2] === k)) { d.close(); go(); }
+    return true;
+  });
+  // the system clipboard arrives with ⌘V / Ctrl+V as a paste event (works while focus is in the dialog)
+  const onPaste = e => {
+    if (!document.body.contains(d.el)) { document.removeEventListener('paste', onPaste, true); return; }
+    e.preventDefault(); e.stopPropagation();
+    document.removeEventListener('paste', onPaste, true);
+    const html = e.clipboardData.getData('text/html'), text = e.clipboardData.getData('text/plain');
+    d.close();
+    app.pasteData(html, text, tr ? 'transpose' : mode, { op, skipBlanks: skip });
+  };
+  document.addEventListener('paste', onPaste, true);
+  setTimeout(() => modeBox.querySelector('input:checked')?.focus(), 40);
+}
 // ---------- resize / insert / delete ----------
 export function resizeDialog(app, kind) {
   const g = app.grid;
@@ -265,21 +322,26 @@ export function resizeDialog(app, kind) {
   });
 }
 
-export function insertCellsDialog(app) {
-  let v = 'down';
-  dialog({
-    title: 'Sisipkan', width: 320,
-    body: el('div.stack', ...[['right', 'Geser sel ke kanan'], ['down', 'Geser sel ke bawah'], ['row', 'Seluruh baris'], ['col', 'Seluruh kolom']].map(([k, lb]) => el('label.radio', el('input', { type: 'radio', name: 'ins', checked: k === 'down', onchange: () => (v = k) }), el('span', lb)))),
-    buttons: [{ label: 'Batal' }, { label: 'OK', primary: true, run: () => (v === 'row' ? app.cmd('insertRows', 'above') : v === 'col' ? app.cmd('insertCols', 'left') : app.cmd('shiftCells', v)) }],
+// Sisipkan / Hapus (⌥⌘= / ⌥⌘−, Ctrl+Alt+= / −): a letter runs its option at once, Enter runs the chosen one.
+function cellsDialog(app, title, opts, def, run) {
+  let v = def;
+  const keys = {};
+  const box = keyRadios('cells-' + title, opts, def, x => (v = x), keys);
+  const d = dialog({
+    title, width: 340,
+    body: el('div.stack', box, el('p.muted.small', 'Tekan huruf bergaris bawah untuk langsung menjalankan.')),
+    buttons: [{ label: 'Batal' }, { label: 'OK', primary: true, run: () => run(v) }],
   });
+  dialogLetters(d.el, k => { const o = keys[k]; if (!o) return false; d.close(); run(o.v); return true; });
+  setTimeout(() => box.querySelector('input:checked')?.focus(), 40);
+}
+export function insertCellsDialog(app) {
+  cellsDialog(app, 'Sisipkan', [['right', 'Geser sel ke kanan', 'n'], ['down', 'Geser sel ke bawah', 'w'], ['row', 'Seluruh baris (di atas)', 'b'], ['col', 'Seluruh kolom (di kiri)', 'k']], 'down',
+    v => (v === 'row' ? app.cmd('insertRows', 'above') : v === 'col' ? app.cmd('insertCols', 'left') : app.cmd('shiftCells', v)));
 }
 export function deleteCellsDialog(app) {
-  let v = 'up';
-  dialog({
-    title: 'Hapus', width: 320,
-    body: el('div.stack', ...[['left', 'Geser sel ke kiri'], ['up', 'Geser sel ke atas'], ['row', 'Seluruh baris'], ['col', 'Seluruh kolom']].map(([k, lb]) => el('label.radio', el('input', { type: 'radio', name: 'del', checked: k === 'up', onchange: () => (v = k) }), el('span', lb)))),
-    buttons: [{ label: 'Batal' }, { label: 'OK', primary: true, run: () => (v === 'row' ? app.cmd('deleteRows') : v === 'col' ? app.cmd('deleteCols') : app.cmd('shiftCells', v)) }],
-  });
+  cellsDialog(app, 'Hapus', [['left', 'Geser sel ke kiri', 'i'], ['up', 'Geser sel ke atas', 'a'], ['row', 'Seluruh baris', 'b'], ['col', 'Seluruh kolom', 'k']], 'up',
+    v => (v === 'row' ? app.cmd('deleteRows') : v === 'col' ? app.cmd('deleteCols') : app.cmd('shiftCells', v)));
 }
 
 // ---------- filter popup ----------
@@ -593,18 +655,85 @@ export function functionListDialog(app) {
   d = dialog({ title: 'Daftar fungsi', width: 640, cls: 'dlg-fn', body: el('div.stack', el('div.row', search, cat), count, list), buttons: [{ label: 'Tutup', primary: true }] });
 }
 
+// Every command reachable from the menu bar: path, access-letter sequence and its shortcut id.
+function menuIndex(app) {
+  const out = [];
+  const isOn = f => (typeof f === 'function' ? f() : f);
+  const walk = (items, path, seq, depth) => {
+    let list;
+    try { list = typeof items === 'function' ? items() : items; } catch { return; }
+    if (!Array.isArray(list)) return;
+    const acc = accLetters(list);
+    for (const it of list) {
+      if (!it || it.sep || it.head || it.node || typeof it.label !== 'string' || !it.label || isOn(it.hidden)) continue;
+      const a = acc.get(it);
+      const next = a != null ? [...seq, it.label[a].toUpperCase()] : null;
+      const p = [...path, it.label];
+      if (!it.sub || it.kid) out.push({ path: p, seq: next, kid: it.kid || null });
+      if (it.sub && !it.noIndex && depth < 2 && next) walk(it.sub, p, next, depth + 1);
+    }
+  };
+  for (const [name, items] of Object.entries(menus(app))) walk(items, [name], [name], 0);
+  return out;
+}
+
+// Pintasan keyboard (⌘/ · Ctrl+/): every shortcut of keys.js by topic, searchable, for Mac or Windows,
+// plus every menu command with its keyboard path (⌃⌥ / Alt + menu letter, then the underlined letters).
 export function shortcutsDialog(app) {
-  const m = M();
-  const groups = [
-    ['Tindakan umum', [[`${m}+Z`, 'Urungkan'], [`${m}+Y`, 'Ulangi'], [`${m}+C / X / V`, 'Salin / potong / tempel'], [`${m}+Shift+V`, 'Tempel nilai saja'], [`${m}+F`, 'Cari'], [`${m}+H`, 'Cari dan ganti'], [`${m}+P`, 'Cetak'], [`${m}+S`, 'Simpan'], [`${m}+O`, 'Buka'], [`${m}+/`, 'Pintasan keyboard'], ['Alt+/', 'Telusuri menu']]],
-    ['Format', [[`${m}+B / I / U`, 'Tebal / miring / garis bawah'], ['Alt+Shift+5', 'Coret'], [`${m}+Shift+E / L / R`, 'Rata tengah / kiri / kanan'], [`${m}+Shift+1`, 'Format angka'], [`${m}+Shift+3`, 'Format tanggal'], [`${m}+Shift+4`, 'Format mata uang'], [`${m}+Shift+5`, 'Format persen'], [`${m}+Shift+7`, 'Batas luar'], [`${m}+\\`, 'Hapus format'], [`${m}+1`, 'Format sel (Excel)']]],
-    ['Navigasi & seleksi', [['Panah', 'Pindah sel'], [`${m}+Panah`, 'Ke tepi data'], ['Shift+Panah', 'Perluas seleksi'], [`${m}+A`, 'Pilih semua'], [`${m}+Spasi`, 'Pilih kolom'], ['Shift+Spasi', 'Pilih baris'], [`${m}+Home / End`, 'Ke awal / akhir data'], [`${m}+PageUp / PageDown`, 'Sheet sebelumnya / berikutnya'], ['Alt+PageUp / PageDown', 'Geser horizontal']]],
-    ['Mengedit', [['Enter / F2', 'Edit sel'], ['Alt+Enter', 'Baris baru dalam sel'], [`${m}+Enter`, 'Isi seluruh seleksi'], [`${m}+Shift+Enter`, 'Rumus array'], ['F4', 'Ganti referensi absolut ($)'], ['Esc', 'Batalkan edit'], ['Delete', 'Hapus nilai'], [`${m}+D / R`, 'Isi ke bawah / kanan'], [`${m}+;`, 'Tanggal hari ini'], [`${m}+Shift+;`, 'Waktu sekarang'], ['Alt+=', 'Jumlah otomatis'], [`${m}+E`, 'Isi kilat']]],
-    ['Baris, kolom, sheet', [[`${m}+Alt+=`, 'Sisipkan sel'], [`${m}+Alt+-`, 'Hapus sel'], [`${m}+9 / 0`, 'Sembunyikan baris / kolom'], [`${m}+Shift+9 / 0`, 'Tampilkan baris / kolom'], ['Shift+F11', 'Sheet baru'], [`${m}+Shift+F`, 'Buat / hapus filter'], ['Shift+F2', 'Catatan'], [`${m}+K`, 'Sisipkan link'], [`${m}+\``, 'Tampilkan rumus'], ['F9', 'Hitung ulang']]],
-  ];
+  let mac = KY.isMac;
+  const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const search = el('input.inp.keys-search', { type: 'search', 'data-enter': '1', placeholder: 'Cari fitur atau tombol… mis. sisipkan baris, tempel nilai, gabung', 'aria-label': 'Cari pintasan' });
+  const plat = segmented([{ value: 'mac', label: 'Mac' }, { value: 'win', label: 'Windows' }], mac ? 'mac' : 'win', v => { mac = v === 'mac'; draw(); });
+  const legend = el('div.keys-legend');
+  const list = el('div.keys');
+  const index = menuIndex(app);
+  const chips = spec => el('span.kc', ...spec.split(' ').flatMap((step, i) => [i ? el('span.kc-then', 'lalu') : null, el('span.kc-chord', ...KY.chordParts(step, mac).map(k => el('kbd', k)))]).filter(Boolean));
+  const keyCell = specs => el('span.kc-alts', ...specs.flatMap((k, i) => [i ? el('span.kc-or', 'atau') : null, chips(k)]).filter(Boolean));
+  const menuChord = name => KY.keysFor(KY.shortcut('menu' + KY.MENU_KEYS[name]), mac)[0];
+  const draw = () => {
+    const q = norm(search.value.trim());
+    const words = q.split(/\s+/).filter(Boolean);
+    const hit = text => words.every(w => text.includes(w));
+    legend.innerHTML = '';
+    legend.append(...(mac
+      ? [['⌘', 'Command'], ['⌥', 'Option'], ['⇧', 'Shift'], ['⌃', 'Control'], ['⌫', 'Delete']].map(([k, n]) => el('span', el('kbd', k), ' ', n))
+      : [['Ctrl', 'Control'], ['Alt', 'Alt'], ['Shift', 'Shift']].map(([k, n]) => el('span', el('kbd', k), ' ', n))),
+      el('span.muted', mac ? 'Tombol F (F2, F4, F9…) di MacBook: tahan fn.' : 'Pada Mac, ⌘ menggantikan Ctrl dan ⌥ menggantikan Alt.'));
+    list.innerHTML = '';
+    let n = 0;
+    for (const g of KY.GROUPS) {
+      const rows = KY.SHORTCUTS.filter(x => x.group === g).map(x => ({ x, ks: KY.keysFor(x, mac) })).filter(({ x, ks }) => ks.length && (!words.length || hit(norm(`${g} ${x.label} ${ks.map(k => KY.fmtKeys(k, mac)).join(' ')}`))));
+      if (!rows.length) continue;
+      n += rows.length;
+      list.append(el('section.keys-grp', el('h4', g), el('table', ...rows.map(({ x, ks }) => el('tr', el('td', x.label), el('td', keyCell(ks)))))));
+    }
+    // menu commands: the path, then the letters
+    const mrows = index.filter(m => !words.length || hit(norm(m.path.join(' '))));
+    if (mrows.length) {
+      n += mrows.length;
+      const det = el('details.keys-menu', { open: !!words.length },
+        el('summary', el('h4', `Semua perintah menu lewat keyboard (${mrows.length})`),
+          el('span.muted.small', mac ? 'Buka menu dengan ⌃⌥ + huruf menu, lalu tekan huruf bergaris bawah.' : 'Buka menu dengan Alt + huruf menu, lalu tekan huruf bergaris bawah.')),
+        el('table', ...mrows.map(m => {
+          const direct = m.kid ? KY.keysFor(KY.shortcut(m.kid), mac) : [];
+          const seq = m.seq ? [menuChord(m.seq[0]), ...m.seq.slice(1)].join(' ') : null;
+          return el('tr',
+            el('td', el('span.kp', ...m.path.flatMap((p, i) => [i ? el('span.kp-sep', '›') : null, el('span', p)]).filter(Boolean))),
+            el('td', direct.length ? keyCell(direct.slice(0, 1)) : null, direct.length && seq ? el('span.kc-or', 'atau') : null, seq ? chips(seq) : null));
+        })));
+      list.append(det);
+    }
+    if (!n) list.append(el('p.muted.keys-none', 'Tidak ada pintasan yang cocok.'));
+  };
+  search.addEventListener('input', draw);
+  draw();
   dialog({
-    title: 'Pintasan keyboard', width: 760, cls: 'dlg-keys',
-    body: el('div.keys', ...groups.map(([t, rows]) => el('div.keys-grp', el('h4', t), el('table', ...rows.map(([k, d]) => el('tr', el('td', d), el('td', ...k.split(' / ').flatMap((x, i) => [i ? ' / ' : '', el('kbd', x)])))))))),
+    title: 'Pintasan keyboard', width: 940, cls: 'dlg-keys',
+    body: el('div.keys-wrap',
+      el('div.keys-top', search, plat),
+      legend,
+      el('p.muted.small.keys-tip', 'Pintasan juga tampil di samping setiap perintah menu dan saat kursor diarahkan ke tombol bilah alat.'),
+      list),
     buttons: [{ label: 'Tutup', primary: true }],
   });
 }

@@ -8,12 +8,12 @@ import * as D from './dialogs.js';
 import { colorItems } from './files.js';
 import * as store from '../store.js';
 import * as io from '../io.js';
-import { THEME_FONTS } from './toolbar.js';
+import { THEME_FONTS, mergeItems } from './toolbar.js';
+import { K, MENU_KEYS } from '../keys.js';
 import * as SH from '../sharing.js';
 import * as PG from '../pages.js';
 import * as LK from '../lock.js';
 
-const M = () => window.amatu?.MOD || 'Ctrl';
 
 function selInfo(app) {
   const g = app.grid.range;
@@ -63,15 +63,15 @@ function freezeItems(app) {
 
 export function pasteSpecialItems(app) {
   return [
-    { label: 'Hanya nilai', kbd: `${M()}+Shift+V`, run: () => app.pasteFromMenu('values') },
-    { label: 'Hanya format', run: () => app.pasteFromMenu('formats') },
-    { label: 'Hanya rumus', run: () => app.pasteFromMenu('formulas') },
-    { label: 'Tanpa format', run: () => app.pasteFromMenu('nofmt') },
-    { label: 'Hanya validasi data', run: () => app.pasteFromMenu('valid') },
-    { label: 'Hanya lebar kolom', run: () => app.pasteFromMenu('widths') },
-    { label: 'Ditransposisikan', run: () => app.pasteFromMenu('transpose') },
+    { label: 'Hanya nilai', acc: 'n', kid: 'pasteValues', run: () => app.pasteFromMenu('values') },
+    { label: 'Hanya format', acc: 'f', kid: 'psFormats', run: () => app.pasteFromMenu('formats') },
+    { label: 'Hanya rumus', acc: 'r', kid: 'psFormulas', run: () => app.pasteFromMenu('formulas') },
+    { label: 'Tanpa format', acc: 't', kid: 'psNoFmt', run: () => app.pasteFromMenu('nofmt') },
+    { label: 'Hanya validasi data', acc: 'v', kid: 'psValid', run: () => app.pasteFromMenu('valid') },
+    { label: 'Hanya lebar kolom', acc: 'l', kid: 'psWidths', run: () => app.pasteFromMenu('widths') },
+    { label: 'Ditransposisikan', acc: 'd', kid: 'psTranspose', run: () => app.pasteFromMenu('transpose') },
     { sep: true },
-    { label: 'Tempel spesial…', icon: 'content_paste_go', hint: 'Excel', run: () => D.pasteSpecialDialog(app) },
+    { label: 'Tempel spesial…', icon: 'content_paste_go', kid: 'pasteSpecial', run: () => D.pasteSpecialDialog(app) },
   ];
 }
 
@@ -102,7 +102,7 @@ export function menus(app) {
         { sep: true },
         { label: 'Galeri template', icon: 'dashboard', run: () => D.openDialog(app, 'templates') },
       ] },
-      { label: 'Buka', icon: 'folder_open', kbd: `${M()}+O`, run: () => D.openDialog(app) },
+      { label: 'Buka', icon: 'folder_open', kid: 'open', run: () => D.openDialog(app) },
       { label: 'Impor', icon: 'upload_file', run: () => D.importDialog(app) },
       { label: 'Buat salinan', icon: 'file_copy', run: () => app.cmd('makeCopy') },
       { sep: true },
@@ -122,7 +122,7 @@ export function menus(app) {
       { label: 'Kategori warna', icon: 'palette', sub: () => colorItems(store.docMeta(app.wb.id).c || null, c => app.setDocColor(c), () => app.updateDocMeta()) },
       { label: 'Histori versi', icon: 'history', sub: [
         { label: 'Beri nama versi saat ini', run: async () => { const n = await promptDlg('Beri nama versi', 'Nama versi', ''); if (n) { await (await import('../store.js')).saveVersion(app.wb, n); toast('Versi disimpan'); } } },
-        { label: 'Lihat histori versi', run: () => app.sidebar.open('versions') },
+        { label: 'Lihat histori versi', kid: 'versions', run: () => app.sidebar.open('versions') },
       ] },
       { label: 'Pindahkan ke sampah', icon: 'delete', run: () => D.deleteDocDialog(app) },
       { label: 'Sampah', icon: 'delete_sweep', hint: `disimpan ${store.TRASH_DAYS} hari`, run: () => D.openDialog(app, 'trash') },
@@ -132,118 +132,142 @@ export function menus(app) {
       { sep: true },
       { label: 'Penyiapan halaman (kertas & margin)…', icon: 'description', run: () => PG.setupDialog(app) },
       { label: 'Pratinjau cetak', icon: 'preview', run: () => app.cmd('print') },
-      { label: 'Cetak', icon: 'print', kbd: `${M()}+P`, run: () => app.cmd('print') },
+      { label: 'Cetak', icon: 'print', kid: 'print', run: () => app.cmd('print') },
     ],
     Edit: [
-      { label: 'Urungkan', icon: 'undo', kbd: `${M()}+Z`, disabled: () => !app.wb.hist.undoS.length, run: () => app.undo() },
-      { label: 'Ulangi', icon: 'redo', kbd: `${M()}+Y`, disabled: () => !app.wb.hist.redoS.length, run: () => app.redo() },
+      { label: 'Urungkan', icon: 'undo', kid: 'undo', disabled: () => !app.wb.hist.undoS.length, run: () => app.undo() },
+      { label: 'Ulangi', icon: 'redo', kid: 'redo', disabled: () => !app.wb.hist.redoS.length, run: () => app.redo() },
       { sep: true },
-      { label: 'Potong', icon: 'content_cut', kbd: `${M()}+X`, run: () => sysCopy(app, true) },
-      { label: 'Salin', icon: 'content_copy', kbd: `${M()}+C`, run: () => sysCopy(app, false) },
-      { label: 'Tempel', icon: 'content_paste', kbd: `${M()}+V`, run: () => app.pasteFromMenu('all') },
-      { label: 'Tempel spesial', icon: 'content_paste_go', sub: () => pasteSpecialItems(app) },
+      { label: 'Potong', icon: 'content_cut', kid: 'cut', run: () => sysCopy(app, true) },
+      { label: 'Salin', icon: 'content_copy', kid: 'copy', run: () => sysCopy(app, false) },
+      { label: 'Tempel', icon: 'content_paste', kid: 'paste', run: () => app.pasteFromMenu('all') },
+      { label: 'Tempel nilai saja', icon: 'content_paste_search', acc: 'n', kid: 'pasteValues', run: () => app.pasteFromMenu('values') },
+      { label: 'Tempel spesial', icon: 'content_paste_go', kid: 'pasteSpecial', sub: () => pasteSpecialItems(app) },
       { sep: true },
       { label: 'Hapus', icon: 'backspace', sub: [
-        { label: 'Nilai', kbd: 'Delete', run: () => app.cmd('clear', 'contents') },
-        { label: 'Format', kbd: `${M()}+\\`, run: () => app.cmd('clear', 'formats') },
+        { label: 'Nilai', kid: 'clear', run: () => app.cmd('clear', 'contents') },
+        { label: 'Format', kid: 'clearFormats', run: () => app.cmd('clear', 'formats') },
         { label: 'Catatan', run: () => app.cmd('clear', 'notes') },
-        { label: 'Semua', run: () => app.cmd('clear', 'all') },
+        { label: 'Semua', kid: 'clearAll', run: () => app.cmd('clear', 'all') },
       ] },
       { label: () => '', hidden: true },
-      { label: `Hapus baris`, icon: 'table_rows', run: () => app.cmd('deleteRows') },
-      { label: `Hapus kolom`, icon: 'view_column', run: () => app.cmd('deleteCols') },
+      { label: `Hapus baris`, icon: 'table_rows', kid: 'delRowSeq', run: () => app.cmd('deleteRows') },
+      { label: `Hapus kolom`, icon: 'view_column', kid: 'delColSeq', run: () => app.cmd('deleteCols') },
+      { label: 'Hapus sel…', icon: 'grid_off', kid: 'delete', run: () => D.deleteCellsDialog(app) },
       { sep: true },
-      { label: 'Cari dan ganti', icon: 'find_replace', kbd: `${M()}+H`, run: () => D.replaceDialog(app, true) },
+      { label: 'Isi ke bawah', icon: 'vertical_align_bottom', acc: 'w', kid: 'fillDown', run: () => app.cmd('fillDown') },
+      { label: 'Isi ke kanan', icon: 'keyboard_tab', acc: 'i', kid: 'fillRight', run: () => app.cmd('fillRight') },
+      { sep: true },
+      { label: 'Cari', icon: 'search', kid: 'find', run: () => D.findDialog(app) },
+      { label: 'Cari dan ganti', icon: 'find_replace', kid: 'replace', run: () => D.replaceDialog(app, true) },
     ],
     Lihat: [
       { label: 'Tampilkan', icon: 'visibility', sub: [
         { label: 'Garis kisi', checked: () => app.sheet.grid, run: () => app.cmd('toggleGridlines') },
-        { label: 'Rumus', kbd: `${M()}+\``, checked: () => app.showFormulas, run: () => app.cmd('toggleFormulas') },
+        { label: 'Rumus', kid: 'formulas', checked: () => app.showFormulas, run: () => app.cmd('toggleFormulas') },
         { label: 'Sel yang bisa diedit pelihat', checked: () => !!app.settings.showVE, run: () => app.cmd('toggleShowVE') },
         { label: 'Pemisah halaman', checked: () => !!app.settings.breaks, run: () => PG.showBreaks(app, !app.settings.breaks) },
         { label: 'Saran saat tabel terpotong halaman', checked: () => app.settings.breakTips !== false, run: () => { app.settings.breakTips = app.settings.breakTips === false; app.saveSettings(); app.onSelChange(); } },
         { label: 'Bilah formula', checked: () => !document.body.classList.contains('no-fx'), run: () => { document.body.classList.toggle('no-fx'); app.grid.resize(); } },
         { label: 'Bilah alat', checked: () => !document.body.classList.contains('no-toolbar'), run: () => { document.body.classList.toggle('no-toolbar'); app.grid.resize(); } },
+        { label: 'Menu & bilah alat ringkas', kid: 'compact', checked: () => document.body.classList.contains('compact'), run: () => { document.body.classList.toggle('compact'); app.grid.resize(); } },
       ] },
       { label: 'Bekukan', icon: 'ac_unit', sub: () => freezeItems(app) },
       { sep: true },
-      { label: 'Zoom', icon: 'zoom_in', sub: [50, 75, 90, 100, 125, 150, 200].map(z => ({ label: z + '%', checked: () => Math.round(app.grid.z * 100) === z, run: () => app.setZoom(z / 100) })) },
-      { label: 'Tema', icon: 'palette', sub: () => app.themeMenu() },
+      { label: 'Zoom', icon: 'zoom_in', noIndex: true, sub: () => [
+        { label: 'Perbesar', icon: 'zoom_in', kid: 'zoomIn', run: () => app.setZoom(app.grid.z + 0.1) },
+        { label: 'Perkecil', icon: 'zoom_out', kid: 'zoomOut', run: () => app.setZoom(app.grid.z - 0.1) },
+        { sep: true },
+        ...[50, 75, 90, 100, 125, 150, 200].map(z => ({ label: z + '%', checked: () => Math.round(app.grid.z * 100) === z, run: () => app.setZoom(z / 100) })),
+      ] },
+      { label: 'Tema', icon: 'palette', noIndex: true, sub: () => app.themeMenu() },
       { label: 'Efek kaca cair', icon: 'blur_on', checked: () => app.settings.glass, run: () => app.setGlass(!app.settings.glass) },
       { sep: true },
       { label: 'Layar penuh', icon: 'fullscreen', run: () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.()) },
     ],
     Sisipkan: [
-      { label: 'Sel', icon: 'grid_view', sub: [
-        { label: 'Sisipkan sel dan geser ke kanan', run: () => app.cmd('shiftCells', 'right') },
-        { label: 'Sisipkan sel dan geser ke bawah', run: () => app.cmd('shiftCells', 'down') },
+      { label: 'Sel', icon: 'grid_view', kid: 'insert', sub: [
+        { label: 'Sisipkan sel dan geser ke kanan', acc: 'k', run: () => app.cmd('shiftCells', 'right') },
+        { label: 'Sisipkan sel dan geser ke bawah', acc: 'b', run: () => app.cmd('shiftCells', 'down') },
+        { sep: true },
+        { label: 'Pilih cara menyisipkan…', icon: 'tune', kid: 'insert', run: () => D.insertCellsDialog(app) },
       ] },
       { label: 'Baris', icon: 'table_rows', sub: () => { const s = selInfo(app); return [
-        { label: `Sisipkan ${s.rows} baris di atas`, run: () => app.cmd('insertRows', 'above') },
-        { label: `Sisipkan ${s.rows} baris di bawah`, run: () => app.cmd('insertRows', 'below') },
+        { label: `Sisipkan ${s.rows} baris di atas`, acc: 'a', icon: 'north', kid: 'insRowAbove', run: () => app.cmd('insertRows', 'above') },
+        { label: `Sisipkan ${s.rows} baris di bawah`, acc: 'b', icon: 'south', kid: 'insRowBelow', run: () => app.cmd('insertRows', 'below') },
       ]; } },
       { label: 'Kolom', icon: 'view_column', sub: () => { const s = selInfo(app); return [
-        { label: `Sisipkan ${s.cols} kolom ke kiri`, run: () => app.cmd('insertCols', 'left') },
-        { label: `Sisipkan ${s.cols} kolom ke kanan`, run: () => app.cmd('insertCols', 'right') },
+        { label: `Sisipkan ${s.cols} kolom ke kiri`, acc: 'k', icon: 'west', kid: 'insColLeft', run: () => app.cmd('insertCols', 'left') },
+        { label: `Sisipkan ${s.cols} kolom ke kanan`, acc: 'n', icon: 'east', kid: 'insColRight', run: () => app.cmd('insertCols', 'right') },
       ]; } },
-      { label: 'Sheet', icon: 'add_box', kbd: 'Shift+F11', run: () => app.cmd('addSheet') },
+      { label: 'Sheet', icon: 'add_box', kid: 'addSheet', run: () => app.cmd('addSheet') },
       { sep: true },
-      { label: 'Diagram', icon: 'insert_chart', run: () => app.sidebar.open('chart', { create: true }) },
-      { label: 'Tabel pivot', icon: 'pivot_table_chart', run: () => D.pivotDialog(app) },
-      { label: 'Tanda tangan', icon: 'signature', run: () => app.images.insertDialog() },
+      { label: 'Diagram', icon: 'insert_chart', kid: 'chart', run: () => app.sidebar.open('chart', { create: true }) },
+      { label: 'Tabel pivot', icon: 'pivot_table_chart', kid: 'pivot', run: () => D.pivotDialog(app) },
+      { label: 'Tanda tangan', icon: 'signature', kid: 'signature', run: () => app.images.insertDialog() },
       { label: 'Gambar dalam sel', icon: 'image', run: async () => { const u = await promptDlg('Sisipkan gambar dalam sel', 'URL gambar', 'https://'); if (u && u !== 'https://') { const g = app.grid; app.tx('Gambar', () => app.sheet.put(g.sel.r, g.sel.c, { f: `IMAGE("${u.replace(/"/g, '""')}")`, v: null })); } } },
-      { label: 'Fungsi', icon: 'functions', sub: () => functionItems(app) },
+      { label: 'Fungsi', icon: 'functions', kid: 'function', noIndex: true, sub: () => functionItems(app) },
+      { label: 'Jumlah otomatis (SUM)', icon: 'functions', acc: 'j', kid: 'autosum', run: () => app.cmd('autosum', 'SUM') },
       { sep: true },
-      { label: 'Link', icon: 'link', kbd: `${M()}+K`, run: () => D.linkDialog(app) },
-      { label: 'Kotak centang', icon: 'check_box', run: () => app.cmd('insertCheckbox') },
-      { label: 'Dropdown', icon: 'arrow_drop_down_circle', run: () => app.cmd('insertDropdown') },
-      { label: 'Catatan', icon: 'sticky_note_2', kbd: 'Shift+F2', run: () => D.noteDialog(app) },
+      { label: 'Link', icon: 'link', kid: 'link', run: () => D.linkDialog(app) },
+      { label: 'Kotak centang', icon: 'check_box', kid: 'checkbox', run: () => app.cmd('insertCheckbox') },
+      { label: 'Dropdown', icon: 'arrow_drop_down_circle', kid: 'dropdown', run: () => app.cmd('insertDropdown') },
+      { label: 'Catatan', icon: 'sticky_note_2', kid: 'note', run: () => D.noteDialog(app) },
       { sep: true },
-      { label: 'Tanggal hari ini', icon: 'today', kbd: `${M()}+;`, run: () => app.cmd('insertNow', 'date') },
-      { label: 'Waktu sekarang', icon: 'schedule', kbd: `${M()}+Shift+;`, run: () => app.cmd('insertNow', 'time') },
+      { label: 'Tanggal hari ini', icon: 'today', kid: 'date', run: () => app.cmd('insertNow', 'date') },
+      { label: 'Waktu sekarang', icon: 'schedule', kid: 'time', run: () => app.cmd('insertNow', 'time') },
+      { label: 'Tanggal dan waktu', icon: 'event', kid: 'datetime', run: () => app.cmd('insertNow', 'datetime') },
     ],
     Format: [
-      { label: 'Angka', icon: 'tag', sub: () => numberFormatItems(app) },
+      { label: 'Angka', icon: 'tag', kid: 'numMenu', sub: () => numberFormatItems(app) },
       { label: 'Teks', icon: 'format_bold', sub: [
-        { label: 'Tebal', icon: 'format_bold', kbd: `${M()}+B`, checked: () => st().b, run: () => app.cmd('toggleStyle', 'b') },
-        { label: 'Miring', icon: 'format_italic', kbd: `${M()}+I`, checked: () => st().i, run: () => app.cmd('toggleStyle', 'i') },
-        { label: 'Garis bawah', icon: 'format_underlined', kbd: `${M()}+U`, checked: () => st().u, run: () => app.cmd('toggleStyle', 'u') },
-        { label: 'Coret', icon: 'strikethrough_s', kbd: 'Alt+Shift+5', checked: () => st().s, run: () => app.cmd('toggleStyle', 's') },
+        { label: 'Tebal', icon: 'format_bold', kid: 'bold', checked: () => st().b, run: () => app.cmd('toggleStyle', 'b') },
+        { label: 'Miring', icon: 'format_italic', kid: 'italic', checked: () => st().i, run: () => app.cmd('toggleStyle', 'i') },
+        { label: 'Garis bawah', icon: 'format_underlined', kid: 'underline', checked: () => st().u, run: () => app.cmd('toggleStyle', 'u') },
+        { label: 'Coret', icon: 'strikethrough_s', kid: 'strike', checked: () => st().s, run: () => app.cmd('toggleStyle', 's') },
+        { sep: true },
+        { label: 'Perbesar ukuran font', icon: 'text_increase', kid: 'fontBigger', run: () => app.cmd('fontSize', (st().fs || app.defFont.fs) + 1) },
+        { label: 'Perkecil ukuran font', icon: 'text_decrease', kid: 'fontSmaller', run: () => app.cmd('fontSize', Math.max(1, (st().fs || app.defFont.fs) - 1)) },
+        { label: 'Warna teks…', icon: 'format_color_text', kid: 'textColor', run: () => app.toolbar.open('color') },
+        { label: 'Warna isian…', icon: 'format_color_fill', kid: 'fillColor', run: () => app.toolbar.open('bg') },
       ] },
       { label: 'Perataan', icon: 'format_align_left', sub: [
-        { label: 'Kiri', icon: 'format_align_left', kbd: `${M()}+Shift+L`, run: () => app.cmd('align', 'left') },
-        { label: 'Tengah', icon: 'format_align_center', kbd: `${M()}+Shift+E`, run: () => app.cmd('align', 'center') },
-        { label: 'Kanan', icon: 'format_align_right', kbd: `${M()}+Shift+R`, run: () => app.cmd('align', 'right') },
+        { label: 'Kiri', icon: 'format_align_left', kid: 'alignLeft', run: () => app.cmd('align', 'left') },
+        { label: 'Tengah', icon: 'format_align_center', kid: 'alignCenter', run: () => app.cmd('align', 'center') },
+        { label: 'Kanan', icon: 'format_align_right', kid: 'alignRight', run: () => app.cmd('align', 'right') },
         { sep: true },
         { label: 'Atas', icon: 'vertical_align_top', run: () => app.cmd('valign', 'top') },
-        { label: 'Tengah', icon: 'vertical_align_center', run: () => app.cmd('valign', 'middle') },
+        { label: 'Tengah vertikal', icon: 'vertical_align_center', run: () => app.cmd('valign', 'middle') },
         { label: 'Bawah', icon: 'vertical_align_bottom', run: () => app.cmd('valign', 'bottom') },
+        { label: 'Pilih perataan vertikal…', icon: 'tune', kid: 'valignMenu', run: () => app.toolbar.open('valign') },
       ] },
-      { label: 'Pengemasan', icon: 'wrap_text', sub: [
+      { label: 'Pengemasan', icon: 'wrap_text', kid: 'wrap', sub: [
         { label: 'Luapan', icon: 'format_overline', checked: () => !st().wrap, run: () => app.cmd('wrap', 'overflow') },
         { label: 'Kemas', icon: 'wrap_text', checked: () => st().wrap === 'wrap', run: () => app.cmd('wrap', 'wrap') },
         { label: 'Potong', icon: 'content_cut', checked: () => st().wrap === 'clip', run: () => app.cmd('wrap', 'clip') },
       ] },
-      { label: 'Rotasi', icon: 'text_rotate_up', sub: ROT.map(r => ({ label: r.label, icon: r.icon, checked: () => (st().rot || 0) === r.v, run: () => app.cmd('rotate', r.v) })) },
-      { label: 'Ukuran font', icon: 'format_size', sub: [6, 7, 8, 9, 10, 11, 12, 14, 18, 24, 36].map(s => ({ label: String(s), checked: () => (st().fs || app.defFont.fs) === s, run: () => app.cmd('fontSize', s) })) },
-      { label: 'Gabungkan sel', icon: 'cell_merge', sub: [
-        { label: 'Gabungkan semua', run: () => app.cmd('merge', 'all') },
-        { label: 'Gabungkan secara horizontal', run: () => app.cmd('merge', 'h') },
-        { label: 'Gabungkan secara vertikal', run: () => app.cmd('merge', 'v') },
-        { label: 'Pisahkan', run: () => app.cmd('merge', 'none') },
+      { label: 'Rotasi', icon: 'text_rotate_up', kid: 'rotateMenu', sub: ROT.map(r => ({ label: r.label, icon: r.icon, checked: () => (st().rot || 0) === r.v, run: () => app.cmd('rotate', r.v) })) },
+      { label: 'Ukuran font', icon: 'format_size', noIndex: true, sub: [6, 7, 8, 9, 10, 11, 12, 14, 18, 24, 36].map(s => ({ label: String(s), checked: () => (st().fs || app.defFont.fs) === s, run: () => app.cmd('fontSize', s) })) },
+      { label: 'Gabungkan sel', icon: 'cell_merge', kid: 'mergeToggle', sub: () => mergeItems(app) },
+      { label: 'Batas', icon: 'border_all', kid: 'bordersMenu', sub: () => [
+        ...[['all', 'border_all', 'Semua batas', 'borderAll'], ['outer', 'border_outer', 'Batas luar', 'borderOuter'], ['top', 'border_top', 'Batas atas', 'borderTop'], ['bottom', 'border_bottom', 'Batas bawah', 'borderBottom'], ['left', 'border_left', 'Batas kiri', 'borderLeft'], ['right', 'border_right', 'Batas kanan', 'borderRight'], ['clear', 'border_clear', 'Hapus batas', 'borderClear']]
+          .map(([t, ic, label, id]) => ({ label, icon: ic, kid: id, run: () => app.cmd('borders', t) })),
+        { sep: true },
+        { label: 'Warna & gaya garis…', icon: 'line_style', kid: 'bordersMenu', run: () => app.toolbar.open('borders') },
       ] },
+      { label: 'Format cat (salin format)', icon: 'format_paint', acc: 'c', kid: 'paintFormat', run: () => app.cmd('paintFormat') },
       { sep: true },
-      { label: 'Format sel…', icon: 'tune', kbd: `${M()}+1`, run: () => D.formatCellsDialog(app) },
-      { label: 'Format bersyarat', icon: 'format_color_fill', run: () => app.sidebar.open('cf') },
-      { label: 'Warna bergantian', icon: 'format_list_bulleted', run: () => app.sidebar.open('banding') },
-      { label: 'Font default', icon: 'font_download', sub: () => THEME_FONTS.map(f => ({ label: f, checked: () => app.defFont.ff === f, run: () => app.cmd('defaultFont', f, app.defFont.fs) })) },
+      { label: 'Format sel…', icon: 'tune', kid: 'formatCells', run: () => D.formatCellsDialog(app) },
+      { label: 'Format bersyarat', icon: 'format_color_fill', kid: 'cf', run: () => app.sidebar.open('cf') },
+      { label: 'Warna bergantian', icon: 'format_list_bulleted', kid: 'banding', run: () => app.sidebar.open('banding') },
+      { label: 'Font default', icon: 'font_download', noIndex: true, sub: () => THEME_FONTS.map(f => ({ label: f, checked: () => app.defFont.ff === f, run: () => app.cmd('defaultFont', f, app.defFont.fs) })) },
       { sep: true },
       { label: 'Ubah huruf', icon: 'match_case', sub: [
         { label: 'HURUF BESAR', run: () => app.cmd('changeCase', 'upper') },
         { label: 'huruf kecil', run: () => app.cmd('changeCase', 'lower') },
         { label: 'Huruf Awal Kapital', run: () => app.cmd('changeCase', 'proper') },
       ] },
-      { label: 'Hapus format', icon: 'format_clear', kbd: `${M()}+\\`, run: () => app.cmd('clear', 'formats') },
+      { label: 'Hapus format', icon: 'format_clear', kid: 'clearFormats', run: () => app.cmd('clear', 'formats') },
     ],
     'Tata letak': () => PG.layoutMenu(app),
     Data: [
@@ -258,12 +282,12 @@ export function menus(app) {
       ] },
       { sep: true },
       { label: () => '', hidden: true },
-      { label: 'Buat filter', icon: 'filter_alt', kbd: `${M()}+Shift+F`, hidden: hasFilter, run: () => app.cmd('toggleFilter') },
-      { label: 'Hapus filter', icon: 'filter_alt_off', kbd: `${M()}+Shift+F`, hidden: () => !hasFilter(), run: () => app.cmd('toggleFilter') },
+      { label: 'Buat filter', icon: 'filter_alt', kid: 'filter', hidden: hasFilter, run: () => app.cmd('toggleFilter') },
+      { label: 'Hapus filter', icon: 'filter_alt_off', kid: 'filter', hidden: () => !hasFilter(), run: () => app.cmd('toggleFilter') },
       { sep: true },
-      { label: 'Validasi data', icon: 'rule', run: () => app.sidebar.open('dv') },
+      { label: 'Validasi data', icon: 'rule', kid: 'dv', run: () => app.sidebar.open('dv') },
       { label: 'Statistik kolom', icon: 'query_stats', run: () => D.columnStatsDialog(app) },
-      { label: 'Rentang bernama', icon: 'label', run: () => app.sidebar.open('names') },
+      { label: 'Rentang bernama', icon: 'label', kid: 'names', run: () => app.sidebar.open('names') },
       { label: 'Proteksi & izin', icon: 'lock', sub: () => protectItems(app) },
       { sep: true },
       { label: 'Pembersihan data', icon: 'cleaning_services', sub: [
@@ -278,25 +302,26 @@ export function menus(app) {
         { label: 'Spasi', run: () => app.cmd('splitText', ' ') },
         { label: 'Kustom…', run: async () => { const d = await promptDlg('Pemisah kustom', 'Karakter pemisah', '|'); if (d) app.cmd('splitText', d); } },
       ] },
-      { label: 'Isi kilat', icon: 'bolt', kbd: `${M()}+E`, hint: 'Excel', run: () => app.cmd('flashFill') },
+      { label: 'Isi kilat', icon: 'bolt', kid: 'flashFill', hint: 'Excel', run: () => app.cmd('flashFill') },
       { label: 'Analisis bagaimana-jika', icon: 'psychology_alt', sub: [
         { label: 'Pencarian Tujuan (Goal Seek)…', run: () => D.goalSeekDialog(app) },
       ] },
-      { label: 'Tabel pivot', icon: 'pivot_table_chart', run: () => D.pivotDialog(app) },
+      { label: 'Tabel pivot', icon: 'pivot_table_chart', kid: 'pivot', run: () => D.pivotDialog(app) },
       { label: 'Perbarui tabel pivot', icon: 'refresh', hidden: () => !app.sheet.pivot, run: () => app.cmd('pivotRefresh') },
       { label: 'Acak rentang', icon: 'shuffle', run: () => app.cmd('randomize') },
       { label: 'Konversi rumus ke nilai', icon: 'pin', run: () => app.cmd('toValues') },
     ],
     Alat: [
       { label: 'Isi otomatis teks', icon: 'auto_awesome', checked: () => app.settings.autocomplete !== false, run: () => { app.settings.autocomplete = app.settings.autocomplete === false; app.saveSettings(); } },
-      { label: 'Hitung ulang', icon: 'calculate', kbd: 'F9', run: () => { app.after({ save: false }); toast(`Dihitung ulang dalam ${app.wb.eng.lastMs.toFixed(1)} ms`); } },
+      { label: 'Hitung ulang', icon: 'calculate', kid: 'recalc', run: () => { app.after({ save: false }); toast(`Dihitung ulang dalam ${app.wb.eng.lastMs.toFixed(1)} ms`); } },
       { label: 'Pemeriksa rumus error', icon: 'bug_report', run: () => D.errorCheckDialog(app) },
       { sep: true },
       { label: 'Setelan spreadsheet', icon: 'settings', run: () => D.settingsDialog(app) },
     ],
     Bantuan: [
       { label: 'Daftar fungsi', icon: 'functions', run: () => D.functionListDialog(app) },
-      { label: 'Pintasan keyboard', icon: 'keyboard', kbd: `${M()}+/`, run: () => D.shortcutsDialog(app) },
+      { label: 'Pintasan keyboard', icon: 'keyboard', kid: 'shortcuts', run: () => D.shortcutsDialog(app) },
+      { label: 'Telusuri menu', icon: 'manage_search', kid: 'menuSearch', run: () => document.querySelector('.mb-search')?.focus() },
       { sep: true },
       { label: 'Tentang Amatu Sheets', icon: 'info', run: () => D.aboutDialog(app) },
     ],
@@ -305,21 +330,41 @@ export function menus(app) {
 
 export function buildMenubar(app, host) {
   const defs = menus(app);
+  const opens = {};
   // Click-only, like the toolbar: a menu opens when its name is clicked and stays open until the
   // next click (an item, another menu name, the same name again, outside) or Esc. Moving the mouse
-  // across the bar never opens or closes anything.
+  // across the bar never opens or closes anything. From the keyboard: ⌃⌥ + the underlined letter
+  // (Alt + letter on Windows), see keys.js MENU_KEYS.
   for (const name of Object.keys(defs)) {
-    const b = el('button.mb-item', { type: 'button' }, name);
-    const open = () => {
+    const l = MENU_KEYS[name], i = l ? name.toUpperCase().indexOf(l) : -1;
+    const b = el('button.mb-item', { type: 'button', 'data-tip': l ? `Menu ${name}|${K('menu' + l)}` : null },
+      ...(i >= 0 ? [name.slice(0, i), el('u.acc', name[i]), name.slice(i + 1)] : [name]));
+    const open = (kb = false) => {
       document.querySelectorAll('.mb-item.open').forEach(x => x.classList.remove('open'));
-      const m = openMenu(menus(app)[name], b.getBoundingClientRect());
+      const m = openMenu(menus(app)[name], b.getBoundingClientRect(), kb ? { keyboard: true } : {});
       b.classList.add('open'); // after openMenu: its closeMenus() clears .open while nothing is open yet
       const obs = new MutationObserver(() => { if (!m.isConnected) { b.classList.remove('open'); obs.disconnect(); } });
       obs.observe(document.getElementById('popups'), { childList: true });
     };
+    opens[name] = { b, open };
     b.addEventListener('click', () => { if (b.classList.contains('open')) { closeMenus(); b.classList.remove('open'); } else open(); });
     host.append(b);
   }
+  // keyboard: open a menu by name (phones keep the bar folded behind #btn-menu: open it under that button)
+  app.openBarMenu = name => {
+    const o = opens[name];
+    if (!o) return;
+    if (o.b.offsetParent) { o.open(true); return; }
+    const btn = document.getElementById('btn-menu');
+    openMenu(menus(app)[name], btn?.offsetParent ? btn.getBoundingClientRect() : app.cellAnchor(), { keyboard: true, alignRight: !!btn?.offsetParent });
+  };
+  // underline the access letters of the bar while ⌃⌥ (Mac) / Alt (Windows) is held
+  const isMacK = /Mac|iPhone|iPad/.test(navigator.platform);
+  const held = e => (isMacK ? e.ctrlKey && e.altKey && !e.metaKey : e.altKey && !e.ctrlKey && !e.metaKey);
+  const show = on => document.body.classList.toggle('acc-keys', on);
+  document.addEventListener('keydown', e => { if (held(e)) show(true); }, true);
+  document.addEventListener('keyup', e => { if (!held(e)) show(false); }, true);
+  window.addEventListener('blur', () => show(false));
   // menu search (like "Help > Search the menus")
   const search = el('input.mb-search', { placeholder: 'Telusuri menu (Alt+/)', 'aria-label': 'Telusuri menu' });
   search.addEventListener('input', () => {
@@ -377,73 +422,81 @@ export function protectItems(app) {
 export function cellContextMenu(app) {
   const s = selInfo(app);
   return [
-    { label: 'Potong', icon: 'content_cut', kbd: `${M()}+X`, run: () => sysCopy(app, true) },
-    { label: 'Salin', icon: 'content_copy', kbd: `${M()}+C`, run: () => sysCopy(app, false) },
-    { label: 'Tempel', icon: 'content_paste', kbd: `${M()}+V`, run: () => app.pasteFromMenu('all') },
-    { label: 'Tempel spesial', icon: 'content_paste_go', sub: () => pasteSpecialItems(app) },
+    { label: 'Potong', icon: 'content_cut', kid: 'cut', run: () => sysCopy(app, true) },
+    { label: 'Salin', icon: 'content_copy', kid: 'copy', run: () => sysCopy(app, false) },
+    { label: 'Tempel', icon: 'content_paste', kid: 'paste', run: () => app.pasteFromMenu('all') },
+    { label: 'Tempel nilai saja', icon: 'content_paste_search', acc: 'n', kid: 'pasteValues', run: () => app.pasteFromMenu('values') },
+    { label: 'Tempel spesial', icon: 'content_paste_go', kid: 'pasteSpecial', sub: () => pasteSpecialItems(app) },
     { sep: true },
-    { label: `Sisipkan ${s.rows} baris di atas`, icon: 'add', run: () => app.cmd('insertRows', 'above') },
-    { label: `Sisipkan ${s.cols} kolom di kiri`, icon: 'add', run: () => app.cmd('insertCols', 'left') },
-    { label: 'Sisipkan sel', icon: 'add', sub: [
+    { label: `Sisipkan ${s.rows} baris di atas`, icon: 'add', kid: 'insRowAbove', run: () => app.cmd('insertRows', 'above') },
+    { label: `Sisipkan ${s.rows} baris di bawah`, icon: 'add', kid: 'insRowBelow', run: () => app.cmd('insertRows', 'below') },
+    { label: `Sisipkan ${s.cols} kolom di kiri`, icon: 'add', kid: 'insColLeft', run: () => app.cmd('insertCols', 'left') },
+    { label: `Sisipkan ${s.cols} kolom di kanan`, icon: 'add', kid: 'insColRight', run: () => app.cmd('insertCols', 'right') },
+    { label: 'Sisipkan sel', icon: 'add', kid: 'insert', sub: [
       { label: 'Geser ke kanan', run: () => app.cmd('shiftCells', 'right') },
       { label: 'Geser ke bawah', run: () => app.cmd('shiftCells', 'down') },
     ] },
     { sep: true },
-    { label: `Hapus baris ${s.rLabel}`, icon: 'delete', run: () => app.cmd('deleteRows') },
-    { label: `Hapus kolom ${s.cLabel}`, icon: 'delete', run: () => app.cmd('deleteCols') },
-    { label: 'Hapus sel', icon: 'delete', sub: [
+    { label: `Hapus baris ${s.rLabel}`, icon: 'delete', kid: 'delRowSeq', run: () => app.cmd('deleteRows') },
+    { label: `Hapus kolom ${s.cLabel}`, icon: 'delete', kid: 'delColSeq', run: () => app.cmd('deleteCols') },
+    { label: 'Hapus sel', icon: 'delete', kid: 'delete', sub: [
       { label: 'Geser ke kiri', run: () => app.cmd('shiftCells', 'left') },
       { label: 'Geser ke atas', run: () => app.cmd('shiftCells', 'up') },
     ] },
+    { label: () => '', hidden: true },
+    { label: 'Gabungkan sel', icon: 'cell_merge', kid: 'mergeToggle', hidden: () => selMergedCtx(app) || !multiSel(app), run: () => app.cmd('merge', 'all') },
+    { label: 'Pisahkan sel', icon: 'call_split', kid: 'unmerge', hidden: () => !selMergedCtx(app), run: () => app.cmd('merge', 'none') },
     { sep: true },
-    { label: 'Buat filter', icon: 'filter_alt', hidden: () => !!app.sheet.filter, run: () => app.cmd('toggleFilter') },
-    { label: 'Hapus filter', icon: 'filter_alt_off', hidden: () => !app.sheet.filter, run: () => app.cmd('toggleFilter') },
-    { label: 'Format bersyarat', icon: 'format_color_fill', run: () => app.sidebar.open('cf') },
-    { label: 'Validasi data', icon: 'rule', run: () => app.sidebar.open('dv') },
+    { label: 'Buat filter', icon: 'filter_alt', kid: 'filter', hidden: () => !!app.sheet.filter, run: () => app.cmd('toggleFilter') },
+    { label: 'Hapus filter', icon: 'filter_alt_off', kid: 'filter', hidden: () => !app.sheet.filter, run: () => app.cmd('toggleFilter') },
+    { label: 'Format bersyarat', icon: 'format_color_fill', kid: 'cf', run: () => app.sidebar.open('cf') },
+    { label: 'Validasi data', icon: 'rule', kid: 'dv', run: () => app.sidebar.open('dv') },
     { sep: true },
-    { label: 'Sisipkan link', icon: 'link', kbd: `${M()}+K`, run: () => D.linkDialog(app) },
-    { label: 'Sisipkan catatan', icon: 'sticky_note_2', kbd: 'Shift+F2', run: () => D.noteDialog(app) },
-    { label: 'Dropdown', icon: 'arrow_drop_down_circle', run: () => app.cmd('insertDropdown') },
-    { label: 'Diagram', icon: 'insert_chart', run: () => app.sidebar.open('chart', { create: true }) },
-    { label: 'Sisipkan tanda tangan', icon: 'signature', run: () => app.images.insertDialog() },
+    { label: 'Sisipkan link', icon: 'link', kid: 'link', run: () => D.linkDialog(app) },
+    { label: 'Sisipkan catatan', icon: 'sticky_note_2', kid: 'note', run: () => D.noteDialog(app) },
+    { label: 'Dropdown', icon: 'arrow_drop_down_circle', kid: 'dropdown', run: () => app.cmd('insertDropdown') },
+    { label: 'Diagram', icon: 'insert_chart', kid: 'chart', run: () => app.sidebar.open('chart', { create: true }) },
+    { label: 'Sisipkan tanda tangan', icon: 'signature', kid: 'signature', run: () => app.images.insertDialog() },
     { sep: true },
     { label: 'Halaman cetak', icon: 'insert_page_break', sub: () => PG.layoutMenu(app).filter(x => x.sep || ['move_down', 'content_cut', 'horizontal_rule', 'title', 'insert_page_break', 'tune'].includes(x.icon)) },
     { label: 'Lihat tindakan sel lainnya', icon: 'more_horiz', sub: [
-      { label: 'Format sel…', icon: 'tune', kbd: `${M()}+1`, run: () => D.formatCellsDialog(app) },
+      { label: 'Format sel…', icon: 'tune', kid: 'formatCells', run: () => D.formatCellsDialog(app) },
       { label: 'Tentukan rentang bernama', icon: 'label', run: () => app.sidebar.open('names', { define: true }) },
       { label: 'Konversi rumus ke nilai', icon: 'pin', run: () => app.cmd('toValues') },
       { label: 'Acak rentang', icon: 'shuffle', run: () => app.cmd('randomize') },
       { label: 'Urutkan rentang A–Z', icon: 'sort_by_alpha', run: () => app.cmd('sortRange', app.grid.range, [{ c: app.grid.sel.c, asc: true }], false) },
       { label: 'Urutkan rentang Z–A', icon: 'sort_by_alpha', run: () => app.cmd('sortRange', app.grid.range, [{ c: app.grid.sel.c, asc: false }], false) },
-      { label: 'Hapus format', icon: 'format_clear', run: () => app.cmd('clear', 'formats') },
+      { label: 'Hapus format', icon: 'format_clear', kid: 'clearFormats', run: () => app.cmd('clear', 'formats') },
     ] },
   ];
 }
+const multiSel = app => app.ranges().some(g => g.r1 !== g.r2 || g.c1 !== g.c2);
+const selMergedCtx = app => app.ranges().some(g => app.sheet.merges.some(m => m.r1 <= g.r2 && m.r2 >= g.r1 && m.c1 <= g.c2 && m.c2 >= g.c1));
 
 export function colContextMenu(app) {
   const s = selInfo(app), sh = app.sheet;
   const hiddenNear = [...sh.hiddenC].some(c => c >= s.g.c1 - 1 && c <= s.g.c2 + 1);
   return [
-    { label: 'Potong', icon: 'content_cut', run: () => sysCopy(app, true) },
-    { label: 'Salin', icon: 'content_copy', run: () => sysCopy(app, false) },
-    { label: 'Tempel', icon: 'content_paste', run: () => app.pasteFromMenu('all') },
-    { label: 'Tempel spesial', icon: 'content_paste_go', sub: () => pasteSpecialItems(app) },
+    { label: 'Potong', icon: 'content_cut', kid: 'cut', run: () => sysCopy(app, true) },
+    { label: 'Salin', icon: 'content_copy', kid: 'copy', run: () => sysCopy(app, false) },
+    { label: 'Tempel', icon: 'content_paste', kid: 'paste', run: () => app.pasteFromMenu('all') },
+    { label: 'Tempel spesial', icon: 'content_paste_go', kid: 'pasteSpecial', sub: () => pasteSpecialItems(app) },
     { sep: true },
-    { label: `Sisipkan ${s.cols} kolom di kiri`, icon: 'add', run: () => app.cmd('insertCols', 'left') },
-    { label: `Sisipkan ${s.cols} kolom di kanan`, icon: 'add', run: () => app.cmd('insertCols', 'right') },
-    { label: `Hapus kolom ${s.cLabel}`, icon: 'delete', run: () => app.cmd('deleteCols') },
-    { label: `Kosongkan kolom ${s.cLabel}`, icon: 'backspace', run: () => app.cmd('clear', 'contents') },
-    { label: `Sembunyikan kolom ${s.cLabel}`, icon: 'visibility_off', kbd: `${M()}+0`, run: () => app.cmd('hideCols') },
-    { label: 'Tampilkan kolom', icon: 'visibility', hidden: () => !hiddenNear && !sh.hiddenC.size, run: () => app.cmd('unhideCols') },
+    { label: `Sisipkan ${s.cols} kolom di kiri`, icon: 'add', kid: 'insColLeft', run: () => app.cmd('insertCols', 'left') },
+    { label: `Sisipkan ${s.cols} kolom di kanan`, icon: 'add', kid: 'insColRight', run: () => app.cmd('insertCols', 'right') },
+    { label: `Hapus kolom ${s.cLabel}`, icon: 'delete', kid: 'delete', run: () => app.cmd('deleteCols') },
+    { label: `Kosongkan kolom ${s.cLabel}`, icon: 'backspace', kid: 'clear', run: () => app.cmd('clear', 'contents') },
+    { label: `Sembunyikan kolom ${s.cLabel}`, icon: 'visibility_off', kid: 'hideCols', run: () => app.cmd('hideCols') },
+    { label: 'Tampilkan kolom', icon: 'visibility', kid: 'unhideCols', hidden: () => !hiddenNear && !sh.hiddenC.size, run: () => app.cmd('unhideCols') },
     { label: 'Ubah ukuran kolom', icon: 'width', run: () => D.resizeDialog(app, 'col') },
-    { label: 'Sesuaikan dengan data', icon: 'fit_width', run: () => app.cmd('autofitCols', app.grid.colsFor(s.g.c1)) },
+    { label: 'Sesuaikan dengan data', icon: 'fit_width', kid: 'autofit', run: () => app.cmd('autofitCols', app.grid.colsFor(s.g.c1)) },
     { sep: true },
     { label: 'Urutkan sheet A–Z', icon: 'sort_by_alpha', run: () => app.cmd('sortSheet', true) },
     { label: 'Urutkan sheet Z–A', icon: 'sort_by_alpha', run: () => app.cmd('sortSheet', false) },
     { sep: true },
-    { label: 'Buat filter', icon: 'filter_alt', hidden: () => !!sh.filter, run: () => app.cmd('toggleFilter') },
-    { label: 'Format bersyarat', icon: 'format_color_fill', run: () => app.sidebar.open('cf') },
-    { label: 'Validasi data', icon: 'rule', run: () => app.sidebar.open('dv') },
+    { label: 'Buat filter', icon: 'filter_alt', kid: 'filter', hidden: () => !!sh.filter, run: () => app.cmd('toggleFilter') },
+    { label: 'Format bersyarat', icon: 'format_color_fill', kid: 'cf', run: () => app.sidebar.open('cf') },
+    { label: 'Validasi data', icon: 'rule', kid: 'dv', run: () => app.sidebar.open('dv') },
     { label: 'Statistik kolom', icon: 'query_stats', run: () => D.columnStatsDialog(app) },
   ];
 }
@@ -452,17 +505,17 @@ export function rowContextMenu(app) {
   const s = selInfo(app), sh = app.sheet;
   const hiddenNear = [...sh.hiddenR].some(r => r >= s.g.r1 - 1 && r <= s.g.r2 + 1);
   return [
-    { label: 'Potong', icon: 'content_cut', run: () => sysCopy(app, true) },
-    { label: 'Salin', icon: 'content_copy', run: () => sysCopy(app, false) },
-    { label: 'Tempel', icon: 'content_paste', run: () => app.pasteFromMenu('all') },
-    { label: 'Tempel spesial', icon: 'content_paste_go', sub: () => pasteSpecialItems(app) },
+    { label: 'Potong', icon: 'content_cut', kid: 'cut', run: () => sysCopy(app, true) },
+    { label: 'Salin', icon: 'content_copy', kid: 'copy', run: () => sysCopy(app, false) },
+    { label: 'Tempel', icon: 'content_paste', kid: 'paste', run: () => app.pasteFromMenu('all') },
+    { label: 'Tempel spesial', icon: 'content_paste_go', kid: 'pasteSpecial', sub: () => pasteSpecialItems(app) },
     { sep: true },
-    { label: `Sisipkan ${s.rows} baris di atas`, icon: 'add', run: () => app.cmd('insertRows', 'above') },
-    { label: `Sisipkan ${s.rows} baris di bawah`, icon: 'add', run: () => app.cmd('insertRows', 'below') },
-    { label: `Hapus baris ${s.rLabel}`, icon: 'delete', run: () => app.cmd('deleteRows') },
-    { label: `Kosongkan baris ${s.rLabel}`, icon: 'backspace', run: () => app.cmd('clear', 'contents') },
-    { label: `Sembunyikan baris ${s.rLabel}`, icon: 'visibility_off', kbd: `${M()}+9`, run: () => app.cmd('hideRows') },
-    { label: 'Tampilkan baris', icon: 'visibility', hidden: () => !hiddenNear && !sh.hiddenR.size, run: () => app.cmd('unhideRows') },
+    { label: `Sisipkan ${s.rows} baris di atas`, icon: 'add', kid: 'insRowAbove', run: () => app.cmd('insertRows', 'above') },
+    { label: `Sisipkan ${s.rows} baris di bawah`, icon: 'add', kid: 'insRowBelow', run: () => app.cmd('insertRows', 'below') },
+    { label: `Hapus baris ${s.rLabel}`, icon: 'delete', kid: 'delete', run: () => app.cmd('deleteRows') },
+    { label: `Kosongkan baris ${s.rLabel}`, icon: 'backspace', kid: 'clear', run: () => app.cmd('clear', 'contents') },
+    { label: `Sembunyikan baris ${s.rLabel}`, icon: 'visibility_off', kid: 'hideRows', run: () => app.cmd('hideRows') },
+    { label: 'Tampilkan baris', icon: 'visibility', kid: 'unhideRows', hidden: () => !hiddenNear && !sh.hiddenR.size, run: () => app.cmd('unhideRows') },
     { label: 'Ubah ukuran baris', icon: 'height', run: () => D.resizeDialog(app, 'row') },
     { label: 'Sesuaikan dengan data', icon: 'fit_screen', run: () => app.cmd('autofitRows', app.grid.rowsFor(s.g.r1)) },
     { sep: true },

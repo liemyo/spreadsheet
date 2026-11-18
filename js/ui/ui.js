@@ -1,13 +1,62 @@
 // Generic UI primitives: menus, popups, dialogs, toasts, color picker, tooltips.
 import { el, icon } from '../util.js';
+import { K } from '../keys.js';
 
 let openMenus = [];
 const layer = () => document.getElementById('popups');
 
 export function closeMenus(except) {
-  for (const m of openMenus.slice()) if (m !== except && !m.contains(except)) { m.remove(); openMenus.splice(openMenus.indexOf(m), 1); }
+  const a = document.activeElement;
+  let refocus = false;
+  for (const m of openMenus.slice()) if (m !== except && !m.contains(except)) { if (m.contains(a)) refocus = true; m.remove(); openMenus.splice(openMenus.indexOf(m), 1); }
   document.querySelectorAll('.menubar .mb-item.open, .tb-btn.open').forEach(b => { if (!openMenus.length) b.classList.remove('open'); });
+  // keyboard focus was inside a menu / picker that is gone: give it back to the sheet
+  if (refocus && !document.querySelector('.dlg-back')) document.querySelector('.cell-input')?.focus({ preventScroll: true });
 }
+
+// Arrow keys move the focus between the buttons of a picker grid (colours, borders, icon menus).
+export function gridKeys(box, sel, cols) {
+  box.addEventListener('keydown', e => {
+    const d = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[e.key];
+    if (!d && e.key !== 'Home' && e.key !== 'End') return;
+    const list = [...box.querySelectorAll(sel)];
+    const i = list.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const j = e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : Math.max(0, Math.min(list.length - 1, i + d));
+    list[j].focus();
+  });
+}
+
+// Access letters of a menu: the first letter of a word that no earlier item uses (Windows-style
+// underlined letters). Hidden rows count too, so a letter stays put when a neighbour appears.
+export function accLetters(list) {
+  const used = new Set(), out = new Map();
+  const ok = ch => /[a-z0-9]/i.test(ch) && !used.has(ch.toLowerCase());
+  const take = (it, i) => { out.set(it, i); used.add(it._accText[i].toLowerCase()); };
+  const items = list.filter(it => it && !it.sep && !it.head && !it.node && typeof it.label === 'string' && it.label);
+  for (const it of items) it._accText = it.label;
+  // a given letter is underlined where a word starts with it, else in the last word that has it ("ka_n_an")
+  const spot = (t, ch) => {
+    const lo = t.toLowerCase();
+    for (let i = 0; i < lo.length; i++) if (lo[i] === ch && (i === 0 || /[\s(/·–-]/.test(lo[i - 1]))) return i;
+    const w = lo.split(/(?=[\s(])/);
+    for (let k = w.length - 1, end = lo.length; k >= 0; end -= w[k].length, k--) { const j = w[k].indexOf(ch); if (j >= 0) return end - w[k].length + j; }
+    return -1;
+  };
+  for (const it of items) if (it.acc) { const i = spot(it.label, it.acc.toLowerCase()); if (i >= 0 && ok(it.label[i])) take(it, i); }
+  for (const it of items) {
+    if (out.has(it)) continue;
+    const t = it.label;
+    let pick = -1;
+    for (let i = 0; i < t.length && pick < 0; i++) if ((i === 0 || /[\s(/·–-]/.test(t[i - 1])) && ok(t[i]) && /[a-z]/i.test(t[i])) pick = i;
+    for (let i = 0; i < t.length && pick < 0; i++) if (ok(t[i]) && /[a-z]/i.test(t[i])) pick = i;
+    for (let i = 0; i < t.length && pick < 0; i++) if (ok(t[i])) pick = i;
+    if (pick >= 0) take(it, pick);
+  }
+  return out;
+}
+const labelWithAcc = (t, i) => (i == null || i < 0 ? t : el('span.mi-text', t.slice(0, i), el('u.acc', t[i]), t.slice(i + 1)));
 
 function place(node, at, opts = {}) {
   node.style.visibility = 'hidden';
@@ -31,7 +80,8 @@ const isOn = f => (typeof f === 'function' ? f() : f);
 export function openMenu(items, at, opts = {}) {
   if (!opts.sub) closeMenus();
   const list = typeof items === 'function' ? items() : items;
-  const menu = el('div.menu.glass', { role: 'menu' });
+  const menu = el('div.menu.glass' + (opts.keyboard || opts.parent?.classList.contains('acc') ? '.acc' : ''), { role: 'menu' });
+  const acc = accLetters(list);
   let subOpen = null;
   const rows = [];
   // closes this menu's open submenu together with anything opened from it
@@ -51,8 +101,8 @@ export function openMenu(items, at, opts = {}) {
     const dis = isOn(it.disabled), chk = isOn(it.checked);
     const row = el('div.menu-item' + (dis ? '.disabled' : '') + (it.sub ? '.has-sub' : ''), { role: 'menuitem', tabIndex: -1 },
       el('span.mi-icon', chk ? icon('check') : it.icon ? icon(it.icon) : it.swatch ? el('span.swatch' + (it.round ? '.round' : ''), { style: { background: it.swatch } }) : ''),
-      el('span.mi-label', it.label, it.hint ? el('span.mi-hint', it.hint) : null),
-      it.kbd ? el('span.mi-kbd', it.kbd) : null,
+      el('span.mi-label', labelWithAcc(it.label, acc.get(it)), it.hint ? el('span.mi-hint', it.hint) : null),
+      it.kbd || it.kid ? el('span.mi-kbd', it.kbd || K(it.kid)) : null,
       it.sub ? icon('chevron_right', 'mi-arrow') : null);
     if (it.preview) row.append(el('span.mi-prev', it.preview));
     const openSub = () => {
@@ -75,6 +125,7 @@ export function openMenu(items, at, opts = {}) {
     rows.push(row);
     row._it = it;
     row._openSub = openSub;
+    if (acc.has(it)) row._acc = it.label[acc.get(it)].toLowerCase();
     menu.append(row);
   }
   openMenus.push(menu);
@@ -83,6 +134,11 @@ export function openMenu(items, at, opts = {}) {
   menu._closeSub = closeSub;
   menu._openSub = () => { const k = rows.find(r => r.classList.contains('kb')); if (k && k._it.sub) k._openSub(); };
   place(menu, at, opts);
+  // opened from the keyboard: the current choice (else the first row) is highlighted so ↑ ↓ Enter work at once
+  if (opts.keyboard) {
+    const r = rows.find(x => !x.classList.contains('disabled') && isOn(x._it.checked)) || rows.find(x => !x.classList.contains('disabled'));
+    if (r) { r.classList.add('kb'); setTimeout(() => r.scrollIntoView({ block: 'nearest' })); }
+  }
   return menu;
 }
 
@@ -92,9 +148,26 @@ document.addEventListener('keydown', e => {
   if (!openMenus.length) return;
   const m = openMenus[openMenus.length - 1];
   const rows = (m._rows || []).filter(r => !r.classList.contains('disabled'));
-  if (!rows.length && e.key !== 'Escape') return;
+  // an underlined letter runs its row (or opens its submenu); typing never reaches the sheet while a menu is open.
+  // The sheet's hidden input keeps the focus while a menu is open (not while a cell is being edited);
+  // a real text box (menu search, font size, picker hex) keeps its typing.
+  const letter = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && /[a-z0-9]/i.test(e.key);
+  const t = e.target, sheetInput = t.classList?.contains('cell-input') && !t.classList.contains('editing');
+  const menuTyping = letter && (sheetInput || !t.closest?.('input,textarea,select,[contenteditable]')) && m._rows?.length;
+  if (!rows.length && e.key !== 'Escape') { if (menuTyping) { e.preventDefault(); e.stopImmediatePropagation(); } return; }
   const i = rows.findIndex(r => r.classList.contains('kb'));
-  const setKb = j => { rows.forEach(r => r.classList.remove('kb')); rows[j]?.classList.add('kb'); rows[j]?.scrollIntoView({ block: 'nearest' }); };
+  const setKb = j => { rows.forEach(r => r.classList.remove('kb')); rows[j]?.classList.add('kb'); rows[j]?.scrollIntoView({ block: 'nearest' }); m.classList.add('acc'); };
+  if (menuTyping) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    const r = rows.find(x => x._acc === e.key.toLowerCase());
+    if (!r) return;
+    m.classList.add('acc');
+    setKb(rows.indexOf(r));
+    r.click();
+    const sm = openMenus[openMenus.length - 1];
+    if (r._it.sub && sm !== m) { sm.classList.add('acc'); sm._rows?.find(x => !x.classList.contains('disabled'))?.classList.add('kb'); }
+    return;
+  }
   if (e.key === 'ArrowDown') { e.preventDefault(); e.stopImmediatePropagation(); setKb((i + 1) % rows.length); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopImmediatePropagation(); setKb((i - 1 + rows.length) % rows.length); }
   else if (e.key === 'ArrowRight' && i >= 0 && rows[i]._it.sub) { e.preventDefault(); e.stopImmediatePropagation(); if (!rows[i].classList.contains('sub-open')) rows[i]._openSub(); const sm = openMenus[openMenus.length - 1]; if (sm !== m) sm?._rows?.find(r => !r.classList.contains('disabled'))?.classList.add('kb'); }
@@ -261,6 +334,7 @@ export function colorGrid(onPick, opts = {}) {
     for (const c of row) grid.append(el('button.cp-sw' + (i === 1 ? '.gap' : ''), { type: 'button', title: c, style: { background: c }, onclick: () => onPick(c) }));
   });
   wrap.append(grid);
+  gridKeys(grid, '.cp-sw', PALETTE[0].length);
   const cust = el('div.cp-custom', el('span.cp-label', 'KUSTOM'));
   const row = el('div.cp-row');
   for (const c of customColors()) row.append(el('button.cp-sw', { type: 'button', title: c, style: { background: c }, onclick: () => onPick(c) }));

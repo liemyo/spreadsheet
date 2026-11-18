@@ -12,6 +12,7 @@ Live: https://liemyo.github.io/spreadsheet/
 - Filter, urutkan, hapus duplikat, pisahkan teks, isi kilat (Ctrl+E), Goal Seek, tabel pivot, statistik kolom, cari & ganti.
 - Diagram (kolom, batang, garis, area, kombo, lingkaran, donat, sebar, radar).
 - Impor/ekspor .xlsx, .ods, .csv, .tsv, .json; cetak/PDF; tautan bagikan; histori versi.
-- Tema Kaca Terang, Kaca Gelap, Aurora, Samudra, Klasik, Hijau Excel, Grafit dengan efek liquid glass.
+- Tema Kaca Terang, Kaca Gelap, Aurora, Samudra, Klasik, Hijau Excel, Grafit, Cokelat Hangat (kertas kerja krem hangat) dengan efek liquid glass.
+- Pintasan keyboard untuk semua alat (⌘/ · Ctrl+/ menampilkan daftarnya, bisa dicari): sisipkan baris/kolom ⌥⇧↑↓←→, tempel nilai ⇧⌘V, tempel spesial ⌥⌘V lalu huruf, gabung/pisahkan sel ⌥⇧M; menu dibuka dengan ⌃⌥ + huruf (Alt + huruf di Windows).
 
 Data tersimpan di perangkat (IndexedDB). Tanpa build step — ES modules murni.

@@ -158,12 +158,17 @@ export function fitRow(app, sh, r, force = false) {
   for (let c = 0; c <= Math.min(sh.maxC, sh.cols - 1); c++) {
     const cell = sh.get(r, c);
     if (!cell) continue;
+    // merged cells: one spanning several rows never stretches a row (like Excel / Sheets), one across
+    // columns wraps in its full width, the cells it covers do not count
+    const m = sh.merges.length ? sh.mergeAt(r, c) : null;
+    if (m && (m.r1 !== m.r2 || m.c1 !== c)) continue;
     const st = app.wb.styles[cell.s] || {};
     const px = ((st.fs || app.defFont.fs) * 4) / 3;
     const d = grid.display(r, c, cell);
     let lines = 1;
     if (d && d.text && (st.wrap === 'wrap' || String(d.text).includes('\n'))) {
-      const w = sh.colWidth(c) - 6;
+      let w = -6;
+      for (let cc = c; cc <= (m ? m.c2 : c); cc++) w += sh.colWidth(cc);
       lines = st.wrap === 'wrap' ? grid.wrapLines(fontOf(st, app.defFont), d.text, Math.max(10, w)).length : String(d.text).split('\n').length;
     }
     h = Math.max(h, Math.ceil(lines * px * 1.25 + 6));
