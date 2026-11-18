@@ -1482,7 +1482,9 @@ export class Grid {
     }
     const src = srcEl || this.app.fx?.activeInput() || this.input;
     const text = src.value;
-    if (src === this.input) this.app.fx?.mirror(text); else this.input.value = text;
+    if (src !== this.input) this.input.value = text;
+    // the formula bar repaints on every keystroke, typed in the cell or in the bar itself
+    this.app.fx?.mirror(text, src);
     if (this.edit.point && src.selectionStart !== this.edit.point.end) { this.edit.point = null; this.edit.pointSel = null; }
     this.edit.refs = text.startsWith('=') ? refsOf(text) : [];
     if (text.startsWith('=')) this.edit.mode = this.edit.mode === 'edit' ? 'edit' : 'enter';

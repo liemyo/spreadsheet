@@ -32,8 +32,17 @@ export function openMenu(items, at, opts = {}) {
   if (!opts.sub) closeMenus();
   const list = typeof items === 'function' ? items() : items;
   const menu = el('div.menu.glass', { role: 'menu' });
-  let subTimer = null, subOpen = null;
+  let subOpen = null;
   const rows = [];
+  // closes this menu's open submenu together with anything opened from it
+  const closeSub = () => {
+    if (subOpen) {
+      const i = openMenus.indexOf(subOpen);
+      for (const m of i >= 0 ? openMenus.splice(i) : [subOpen]) m.remove();
+      subOpen = null;
+    }
+    menu.querySelectorAll('.menu-item.sub-open').forEach(x => x.classList.remove('sub-open'));
+  };
   for (const it of list) {
     if (!it || isOn(it.hidden)) continue;
     if (it.sep) { menu.append(el('div.menu-sep')); continue; }
@@ -47,28 +56,32 @@ export function openMenu(items, at, opts = {}) {
       it.sub ? icon('chevron_right', 'mi-arrow') : null);
     if (it.preview) row.append(el('span.mi-prev', it.preview));
     const openSub = () => {
-      if (subOpen) { subOpen.remove(); openMenus.splice(openMenus.indexOf(subOpen), 1); subOpen = null; }
-      menu.querySelectorAll('.menu-item.sub-open').forEach(x => x.classList.remove('sub-open'));
+      closeSub();
       if (!it.sub || dis) return;
       row.classList.add('sub-open');
       subOpen = openMenu(it.sub, row.getBoundingClientRect(), { sub: true, side: 'right', parent: menu });
     };
-    row.addEventListener('mouseenter', () => { clearTimeout(subTimer); subTimer = setTimeout(openSub, it.sub ? 90 : 160); rows.forEach(x => x.classList.remove('kb')); row.classList.add('kb'); });
+    // The mouse only highlights. A submenu opens on click (or → / Enter) and stays open while the
+    // pointer wanders; it closes on the next click (same row again, another item, outside) or Esc.
+    row.addEventListener('mouseenter', () => { rows.forEach(x => x.classList.remove('kb')); row.classList.add('kb'); });
     row.addEventListener('click', e => {
       e.stopPropagation();
       if (dis) return;
-      if (it.sub) { openSub(); return; }
+      if (it.sub) { if (row.classList.contains('sub-open')) closeSub(); else openSub(); return; }
       closeMenus();
       opts.onPick?.();
       it.run?.();
     });
     rows.push(row);
     row._it = it;
+    row._openSub = openSub;
     menu.append(row);
   }
   openMenus.push(menu);
   menu._rows = rows;
-  menu._openSub = () => { const k = rows.find(r => r.classList.contains('kb')); if (k && k._it.sub) k.dispatchEvent(new Event('click')); };
+  menu._parent = opts.parent || null;
+  menu._closeSub = closeSub;
+  menu._openSub = () => { const k = rows.find(r => r.classList.contains('kb')); if (k && k._it.sub) k._openSub(); };
   place(menu, at, opts);
   return menu;
 }
@@ -83,8 +96,8 @@ document.addEventListener('keydown', e => {
   const setKb = j => { rows.forEach(r => r.classList.remove('kb')); rows[j]?.classList.add('kb'); rows[j]?.scrollIntoView({ block: 'nearest' }); };
   if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setKb((i + 1) % rows.length); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setKb((i - 1 + rows.length) % rows.length); }
-  else if (e.key === 'ArrowRight' && i >= 0 && rows[i]._it.sub) { e.preventDefault(); e.stopPropagation(); rows[i].click(); setTimeout(() => { const sm = openMenus[openMenus.length - 1]; sm?._rows?.[0]?.classList.add('kb'); }, 120); }
-  else if (e.key === 'ArrowLeft' && openMenus.length > 1) { e.preventDefault(); e.stopPropagation(); m.remove(); openMenus.pop(); }
+  else if (e.key === 'ArrowRight' && i >= 0 && rows[i]._it.sub) { e.preventDefault(); e.stopPropagation(); if (!rows[i].classList.contains('sub-open')) rows[i]._openSub(); const sm = openMenus[openMenus.length - 1]; if (sm !== m) sm?._rows?.find(r => !r.classList.contains('disabled'))?.classList.add('kb'); }
+  else if (e.key === 'ArrowLeft' && openMenus.length > 1) { e.preventDefault(); e.stopPropagation(); if (m._parent?._closeSub) m._parent._closeSub(); else { m.remove(); openMenus.pop(); } }
   else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); e.stopPropagation(); rows[i].click(); }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenus(); }
 }, true);

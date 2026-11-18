@@ -98,10 +98,16 @@ export class FormulaBar {
     this.input.readOnly = !app.canEdit(g.sel.r, g.sel.c, true);
   }
 
-  mirror(text) { if (!this.focused) { this.input.value = text; } this.paint(text); }
+  // In a formula the bar's own textarea text is transparent and the colour layer (hl) is what you
+  // see, so hl must be repainted for every edit, also when the typing happens in the bar itself.
+  mirror(text, src) {
+    if (src !== this.input && this.input.value !== text) this.input.value = text;
+    this.paint(text);
+  }
   paint(text) {
     if (text.startsWith('=')) { this.hl.innerHTML = highlightFormula(text, refsOf(text)) + '​'; this.box.classList.add('formula'); }
     else { this.hl.textContent = ''; this.box.classList.remove('formula'); }
+    this.hl.scrollTop = this.input.scrollTop;
   }
   endEdit() { this.hideAssist(); if (this.focused) this.input.blur(); this.sync(); }
 
@@ -240,6 +246,6 @@ export class FormulaBar {
     const m = [...found][0];
     inp.value = typed + m.slice(typed.length);
     inp.setSelectionRange(typed.length, m.length);
-    this.mirror(inp.value);
+    this.mirror(inp.value, inp);
   }
 }

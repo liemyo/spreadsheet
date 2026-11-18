@@ -300,19 +300,19 @@ export function menus(app) {
 
 export function buildMenubar(app, host) {
   const defs = menus(app);
-  let active = null;
+  // Click-only, like the toolbar: a menu opens when its name is clicked and stays open until the
+  // next click (an item, another menu name, the same name again, outside) or Esc. Moving the mouse
+  // across the bar never opens or closes anything.
   for (const name of Object.keys(defs)) {
     const b = el('button.mb-item', { type: 'button' }, name);
     const open = () => {
       document.querySelectorAll('.mb-item.open').forEach(x => x.classList.remove('open'));
-      b.classList.add('open');
-      active = b;
       const m = openMenu(menus(app)[name], b.getBoundingClientRect());
-      const obs = new MutationObserver(() => { if (!m.isConnected) { b.classList.remove('open'); if (active === b) active = null; obs.disconnect(); } });
+      b.classList.add('open'); // after openMenu: its closeMenus() clears .open while nothing is open yet
+      const obs = new MutationObserver(() => { if (!m.isConnected) { b.classList.remove('open'); obs.disconnect(); } });
       obs.observe(document.getElementById('popups'), { childList: true });
     };
-    b.addEventListener('click', () => { if (b.classList.contains('open')) { closeMenus(); b.classList.remove('open'); active = null; } else open(); });
-    b.addEventListener('mouseenter', () => { if (active && active !== b) open(); });
+    b.addEventListener('click', () => { if (b.classList.contains('open')) { closeMenus(); b.classList.remove('open'); } else open(); });
     host.append(b);
   }
   // menu search (like "Help > Search the menus")
