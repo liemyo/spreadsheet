@@ -39,6 +39,17 @@ const THEMES = [
   { id: 'cokelat', label: 'Cokelat Hangat', dark: false },
 ];
 
+// zoom sensitivity levels (Tampilan › Zoom › Sensitivitas zoom); default 'rendah'
+export const ZOOM_SENS = {
+  sangat: { label: 'Sangat rendah', w: 0.25, p: 0.35, step: 0.05 },
+  rendah: { label: 'Rendah (bawaan)', w: 0.5, p: 0.55, step: 0.1 },
+  sedang: { label: 'Sedang', w: 1, p: 0.8, step: 0.1 },
+  tinggi: { label: 'Tinggi', w: 2, p: 1, step: 0.25 },
+};
+export function zoomSensItems(app) {
+  return Object.entries(ZOOM_SENS).map(([id, s]) => ({ label: s.label, checked: () => (app.settings.zoomSens || 'rendah') === id, run: () => app.setZoomSens(id) }));
+}
+
 export class App {
   constructor() {
     this.settings = this.loadSettings();
@@ -593,8 +604,16 @@ export class App {
     if (save) { this.saveSettings(); this.grid?.readTheme(); this.charts?.update(true); }
   }
   setGlass(on) { this.settings.glass = on; this.saveSettings(); this.applyTheme(this.settings.theme); }
-  setZoom(z) {
-    this.grid.setZoom(Math.round(z * 100) / 100);
+  // Sensitivitas zoom: w = trackpad/Ctrl+wheel, p = pinch exponent, step = buttons / keys / mouse wheel notch
+  zoomSens() { return ZOOM_SENS[this.settings.zoomSens] || ZOOM_SENS.rendah; }
+  zoomStep(dir) {
+    const s = this.zoomSens().step;
+    this.setZoom(Math.round((this.grid.z + dir * s) / s + (dir > 0 ? -0.001 : 0.001)) * s);
+  }
+  zoomSensItems() { return zoomSensItems(this); }
+  setZoomSens(id) { this.settings.zoomSens = id; this.saveSettings(); toast('Sensitivitas zoom: ' + ZOOM_SENS[id].label); }
+  setZoom(z, f) {
+    this.grid.setZoom(Math.round(z * 100) / 100, f);
     const zoom = Math.round(this.grid.z * 100);
     document.getElementById('zoom-val').textContent = zoom + '%';
     document.getElementById('zoom-range').value = zoom;
@@ -791,8 +810,8 @@ export class App {
       case '/': D.shortcutsDialog(this); return true;
       case 'e': this.cmd('flashFill'); return true;
       case 'enter': return false;
-      case '=': case '+': if (!e.shiftKey) { this.setZoom(this.grid.z + 0.1); return true; } return false;
-      case '-': this.setZoom(this.grid.z - 0.1); return true;
+      case '=': case '+': if (!e.shiftKey) { this.zoomStep(1); return true; } return false;
+      case '-': this.zoomStep(-1); return true;
     }
     return false;
   }
@@ -1016,9 +1035,9 @@ export class App {
     barsSync();
     const zr = document.getElementById('zoom-range');
     zr.addEventListener('input', () => this.setZoom(+zr.value / 100));
-    document.getElementById('zoom-out').addEventListener('click', () => this.setZoom(this.grid.z - 0.1));
-    document.getElementById('zoom-in').addEventListener('click', () => this.setZoom(this.grid.z + 0.1));
-    document.getElementById('zoom-val').addEventListener('click', e => openMenu([50, 75, 90, 100, 125, 150, 200].map(z => ({ label: z + '%', checked: () => Math.round(this.grid.z * 100) === z, run: () => this.setZoom(z / 100) })), e.currentTarget.getBoundingClientRect()));
+    document.getElementById('zoom-out').addEventListener('click', () => this.zoomStep(-1));
+    document.getElementById('zoom-in').addEventListener('click', () => this.zoomStep(1));
+    document.getElementById('zoom-val').addEventListener('click', e => openMenu([...[50, 75, 90, 100, 125, 150, 200].map(z => ({ label: z + '%', checked: () => Math.round(this.grid.z * 100) === z, run: () => this.setZoom(z / 100) })), { sep: true }, { label: 'Sensitivitas zoom', icon: 'pinch', sub: () => this.zoomSensItems() }], e.currentTarget.getBoundingClientRect()));
     document.getElementById('btn-share').addEventListener('click', () => SH.shareDialog(this));
     document.getElementById('btn-theme').addEventListener('click', e => openMenu(this.themeMenu(), e.currentTarget.getBoundingClientRect(), { alignRight: true }));
     document.getElementById('app-logo').addEventListener('click', () => D.openDialog(this));

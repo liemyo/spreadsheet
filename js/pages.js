@@ -606,7 +606,7 @@ export function printCSS(S = '', f = { ff: 'Arial', fs: 10 }) {
   const ff = `"${String(f.ff || 'Arial').replace(/["\\]/g, '')}", Arial, Helvetica, sans-serif`;
   return `${S}.pg{position:relative;box-sizing:border-box;background:#fff;color:#000;margin:18px auto;box-shadow:0 1px 4px rgba(60,64,67,.3);overflow:hidden;isolation:isolate;font:${f.fs}pt/normal ${ff};text-align:left;letter-spacing:normal;text-transform:none}
 ${S}.pg *{box-sizing:border-box}
-${S}.pg table.sheet{border-collapse:collapse;table-layout:fixed;border-spacing:0;margin:0}
+${S}.pg table.sheet{border-collapse:collapse;table-layout:fixed;border-spacing:0;margin:0;position:static;inset:auto;overflow:visible}
 ${S}.pg table.sheet td{padding:1px 4px;overflow:hidden;white-space:nowrap;line-height:var(--lh,1.25);font-size:${f.fs}pt}
 ${S}.pg table.sheet.grid td{outline:1px solid #d9d9d9;outline-offset:-0.5px}
 ${S}.pg table.sheet tr{break-inside:avoid}
@@ -644,11 +644,16 @@ function pageHTML(app, sh, L, rows, cols, idx, total, first) {
 }
 
 /** Printable pages of some sheets: {css, body, total, all:[{sh, L}]}. over = settings over each sheet's own (object or sh => object). */
-export function printDoc(app, { sheets, over = null, scope = '', limit = Infinity }) {
+// ios: iPhone / iPad Safari ignores @page (size, margins), prints with its own margins + header/footer and scales the
+// whole document so that its WIDTH fills the paper. A page box taller than that paper area came out cut or EMPTY.
+// So there the printed column is made wide enough that every page box keeps the proportions of the iOS paper area
+// (A4 there is about 1 : 1.33, Letter less; 1 : 1.25 keeps every page on one sheet) and the scaling lands each box on one sheet.
+const IOS_ASPECT = 1.25;
+export function printDoc(app, { sheets, over = null, scope = '', limit = Infinity, ios = false }) {
   const all = sheets.map(sh => ({ sh, L: app.withSheet(sh, () => layout(app, sh, typeof over === 'function' ? over(sh) : over)) }));
   const total = all.reduce((a, x) => a + (x.L.g ? x.L.pages : 0), 0);
   const css = [printCSS(scope, app.defFont)], parts = [];
-  let n = 0;
+  let n = 0, iosW = 0;
   for (const { sh, L } of all) {
     if (!L.g) continue;
     const p = L.p, name = 'pg' + sh.id.replace(/\W/g, '');
@@ -657,9 +662,11 @@ export function printDoc(app, { sheets, over = null, scope = '', limit = Infinit
     for (const cols of L.cols) for (const rows of L.rows) {   // down, then over (as Excel)
       if (++n > limit) break;
       parts.push(`<section class="pg ${name}">${app.withSheet(sh, () => pageHTML(app, sh, L, rows, cols, n, total, first))}</section>`);
+      iosW = Math.max(iosW, L.cw, (L.ch + (p.num ? NUM_H : 0)) / IOS_ASPECT);
       first = false;
     }
   }
+  if (ios && iosW) css.push(`@media print{${scope.trim() || 'body'}{width:${Math.ceil(iosW)}px!important}${scope}.pg{margin:0 auto!important;overflow:hidden!important}${scope}.pg-in{margin:0 auto}}`);
   return { css: css.join('\n'), body: parts.join(''), total, shown: Math.min(total, limit), all };
 }
 

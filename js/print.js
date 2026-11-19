@@ -15,6 +15,10 @@ const cm = v => String(+(+v).toFixed(2)).replace('.', ',');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const ORIENT = { portrait: 'potret', landscape: 'lanskap' };
 const PREVIEW_MAX = 40;   // pages drawn in the preview (all of them are printed)
+// iPhone / iPad (also iPadOS that says "Macintosh"): Safari there always prints on portrait paper (it ignores
+// @page size) and draws the PDF / preview pages AFTER afterprint, so the printed pages must stay in the page.
+export const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const TSA = 'html{-webkit-text-size-adjust:100%;text-size-adjust:100%}';   // iOS would enlarge the small print text
 let cur = null;      // the print dialog on screen
 let busy = false;    // a print of ours is running: the page's own beforeprint must stay out of it
 
@@ -37,7 +41,7 @@ function seg(items, value, onPick) {
 }
 const sec = (label, ...kids) => el('div.field.prv-sec', el('span', label), ...kids);
 
-export function printDialog(app, { pdf = false } = {}) {
+export function printDialog(app, { pdf = false, all = false } = {}) {
   if (cur || !app.wb) return;
   if (document.body.classList.contains('file-locked')) return;
   const sh = app.sheet;
@@ -57,19 +61,23 @@ export function printDialog(app, { pdf = false } = {}) {
   if (saved.area) scopes.push({ value: 'area', label: `Area cetak tersimpan · ${rangeAddr(saved.area)}` });
   if (auto) scopes.push({ value: 'auto', label: `Area kerja otomatis · ${rangeAddr(auto)}` });
   if (multi) scopes.push({ value: 'sel', label: `Sel yang dipilih · ${rangeAddr(sel0)}` });
-  if (book.length > 1) scopes.push({ value: 'book', label: `Seluruh workbook · ${book.length} sheet` });
+  if (book.length > 1) scopes.push({ value: 'book', label: `Semua / pilih sheet · ${book.length} sheet` });
   if (!scopes.length) { toast('Tidak ada isi untuk dicetak'); return; }
-  let scope = scopes[0].value;
+  let scope = all && book.length > 1 ? 'book' : scopes[0].value;
+  // sheets ticked for "Semua / pilih sheet" (all of them at first; empty ones are marked)
+  const picked = new Set(book.map(s => s.id));
+  const filled = new Map(book.map(s => [s.id, !!app.withSheet(s, () => PG.autoArea(app, s))]));
 
   // settings over each sheet's own: other sheets keep their print area, breaks and keeps
   const overFor = s => {
     const o = pick(q);
+    if (IOS && o.orient === 'auto') o.orient = 'portrait';   // iPhone / iPad paper is portrait
     if (s !== sh) return o;
     if (scope === 'auto') o.area = null;
     else if (scope === 'sel') o.area = { r1: sel0.r1, c1: sel0.c1, r2: sel0.r2, c2: sel0.c2 };
     return o;
   };
-  const sheets = () => (scope === 'book' ? book : [sh]);
+  const sheets = () => (scope === 'book' ? book.filter(s => picked.has(s.id)) : [sh]);
   let L = null, D = null, lastG = null, big = false;
 
   /* ---------- controls ---------- */
@@ -80,6 +88,15 @@ export function printDialog(app, { pdf = false } = {}) {
 
   const scopeSel = select(scopes, scope, v => { scope = v; update(); });
   const rangeInfo = el('div.prv-hint');
+  // sheet picker for "Semua / pilih sheet": tick the tabs that go into the one print / PDF
+  const sheetCks = book.map(s => {
+    const c = checkbox(s.name + (filled.get(s.id) ? '' : ' (kosong)'), true, v => { if (v) picked.add(s.id); else picked.delete(s.id); syncAll(); update(); });
+    c.classList.toggle('dim', !filled.get(s.id));
+    return c;
+  });
+  const allCk = checkbox('Semua sheet', true, v => { for (const s of book) v ? picked.add(s.id) : picked.delete(s.id); sheetCks.forEach(c => { c.querySelector('input').checked = v; }); update(); });
+  const syncAll = () => { const i = allCk.querySelector('input'); i.checked = picked.size === book.length; i.indeterminate = picked.size > 0 && picked.size < book.length; };
+  const sheetBox = el('div.prv-sheets', allCk, el('div.prv-sheet-list', ...sheetCks));
   const paperSel = select(Object.entries(PG.PAPER).map(([k, v]) => ({ value: k, label: `${v.n} · ${cm(v.mm[0] / 10)} × ${cm(v.mm[1] / 10)} cm` })), q.size, v => { q.size = v; update(); });
   const orientSeg = seg([['auto', 'Otomatis', 'auto_awesome'], ['portrait', 'Potret', 'crop_portrait'], ['landscape', 'Lanskap', 'crop_landscape']], q.orient, v => { q.orient = v; update(); });
   const orientHint = el('div.prv-hint');
@@ -116,7 +133,7 @@ export function printDialog(app, { pdf = false } = {}) {
   const gridCk = checkbox('Garis kisi', true, v => { q.grid = v; update(); });
   const notes = el('div.prv-notes');
   const side = el('div.prv-side',
-    sec('Yang dicetak', scopeSel, rangeInfo),
+    sec('Yang dicetak', scopeSel, sheetBox, rangeInfo),
     sec('Ukuran kertas', paperSel),
     sec('Orientasi', orientSeg, orientHint),
     sec('Skala', fitSeg, el('div.prv-scale', minus, pct, el('span.prv-unit', '%'), plus), scaleHint),
@@ -164,7 +181,7 @@ export function printDialog(app, { pdf = false } = {}) {
   ro.observe(stage);
 
   function paint() {
-    doc.getElementById('pc').textContent = D.css + '\nhtml,body{margin:0}@media print{html,body{background:#fff!important;zoom:1!important}}';
+    doc.getElementById('pc').textContent = D.css + '\n' + TSA + 'html,body{margin:0}@media print{html,body{background:#fff!important;zoom:1!important}}';
     doc.body.innerHTML = D.total ? D.body : '<p style="font:14px Inter,Arial,sans-serif;color:#5f6368;text-align:center;margin-top:40px">Tidak ada isi untuk dicetak</p>';
     fitPreview();
   }
@@ -211,11 +228,12 @@ export function printDialog(app, { pdf = false } = {}) {
     minus.disabled = sc <= 10; plus.disabled = sc >= 400;
     gridCk.querySelector('input').checked = L.grid;
     // texts
-    if (scope === 'book') rangeInfo.textContent = `${D.all.filter(x => x.L.g).length} sheet berisi · area kerja tiap sheet`;
+    sheetBox.hidden = scope !== 'book';
+    if (scope === 'book') rangeInfo.textContent = picked.size ? `${D.all.filter(x => x.L.g).length} dari ${book.length} sheet dicetak jadi 1 ${pdf ? 'PDF' : 'dokumen'} · area kerja tiap sheet` : 'Centang sheet yang mau dicetak';
     else if (L.g) rangeInfo.textContent = `${rangeAddr(L.g)} · ${L.g.c2 - L.g.c1 + 1} kolom × ${L.g.r2 - L.g.r1 + 1} baris — terpilih di sheet`;
     else rangeInfo.textContent = 'Tidak ada isi';
     const o2 = L.other;
-    orientHint.textContent = q.orient !== 'auto' ? '' : !L.g ? '' : o2
+    orientHint.textContent = IOS && q.orient === 'landscape' ? 'iPhone/iPad: di layar Opsi cetak, pilih juga Orientasi lanskap.' : IOS && q.orient === 'auto' && L.g ? `Potret (kertas iPhone/iPad) · tulisan ${sc}%, ${L.pages} halaman` : q.orient !== 'auto' ? '' : !L.g ? '' : o2
       ? `Dipilih ${ORIENT[L.orient]}: tulisan ${sc}%, ${L.pages} halaman (${ORIENT[o2.orient]}: ${Math.round(o2.scale * 100)}%, ${o2.pages} halaman)`
       : `Dipilih ${ORIENT[L.orient]}`;
     const fitTxt = {
@@ -266,7 +284,7 @@ export function printDialog(app, { pdf = false } = {}) {
   async function go(asPdf) {
     if (!D?.total) { toast('Tidak ada isi untuk dicetak'); return; }
     save();
-    if (asPdf) toast('Di jendela cetak, pilih Tujuan: "Simpan sebagai PDF"', { ms: 6000 });
+    if (asPdf) toast(IOS ? 'Di layar Opsi cetak, ketuk ikon Bagikan (kotak dengan panah ↑) lalu "Simpan ke File" — PDF berisi semua halaman' : 'Di jendela cetak, pilih Tujuan: "Simpan sebagai PDF"', { ms: 8000 });
     // the app page itself prints the pages (its own zoom is reset for print): same result in Chrome, Safari and iOS
     mainPrint(app, { sheets: sheets(), over: overFor }, app.wb.name || 'Spreadsheet', () => { if (cur === me) dlg.close(); });
   }
@@ -285,17 +303,28 @@ function ready(doc, root = doc) {
 /* ---------- printing inside the app page (iPhone / iPad, and the browser's own Print menu) ---------- */
 function mount(app, opts) {
   unmount();
-  const d = PG.printDoc(app, { ...opts, scope: '#print-root ' });
+  const d = PG.printDoc(app, { ...opts, scope: '#print-root ', ios: IOS });
   if (!d.total) return false;
   const style = el('style', { id: 'print-root-css' });
-  style.textContent = d.css;
+  style.textContent = d.css + '\n@media print{' + TSA + '}';
   const root = el('div', { id: 'print-root' });
   root.innerHTML = d.body;
   document.head.append(style);
   document.body.append(root);
   return root;
 }
-function unmount() { document.getElementById('print-root')?.remove(); document.getElementById('print-root-css')?.remove(); }
+function unmount() { offBack(); document.getElementById('print-root')?.remove(); document.getElementById('print-root-css')?.remove(); }
+// Safari (iPhone, iPad, Mac) fires afterprint right after it has measured the pages, but draws the preview and
+// the PDF / printed pages later — removing the pages at afterprint gave an EMPTY PDF. So the pages stay (hidden on
+// screen) until the person is back on the sheet: the first touch, click or key after the print sheet is closed.
+let backFn = null;
+function offBack() { if (backFn) for (const t of ['pointerdown', 'keydown', 'wheel']) window.removeEventListener(t, backFn, true); backFn = null; }
+function unmountLater() {
+  offBack();
+  const t0 = Date.now();
+  backFn = () => { if (Date.now() - t0 < 400) return; unmount(); };
+  for (const t of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(t, backFn, true);
+}
 
 let busyAt = 0;
 function mainPrint(app, opts, name, done) {
@@ -306,13 +335,18 @@ function mainPrint(app, opts, name, done) {
   document.title = name;          // the name Chrome proposes for the PDF
   busy = true; busyAt = Date.now();
   let fin = false;
-  const end = () => { if (fin) return; fin = true; busy = false; window.removeEventListener('afterprint', end); unmount(); document.title = t0; done?.(); };
+  let blocking = false;
+  const end = () => {
+    if (fin) return; fin = true; busy = false; window.removeEventListener('afterprint', end);
+    if (blocking) unmount(); else unmountLater();
+    document.title = t0; done?.();
+  };
   window.addEventListener('afterprint', end);
   ready(document, root).then(() => {
     const t = performance.now();
     window.print();
     // Chrome waits here until its print window is closed (printed or cancelled); others finish on afterprint
-    if (performance.now() - t > 300) setTimeout(end, 60);
+    if (performance.now() - t > 300) { blocking = true; setTimeout(end, 60); }
   });
 }
 
@@ -328,7 +362,7 @@ export function installPrint(app) {
   }, true);
   window.addEventListener('beforeprint', () => {
     if (busy || document.getElementById('print-root') || !app.wb || document.body.classList.contains('file-locked')) return;
-    if (!mount(app, { sheets: [app.sheet] })) return;
-    window.addEventListener('afterprint', () => { if (!busy) unmount(); }, { once: true });
+    if (!mount(app, { sheets: [app.sheet], over: IOS && PG.setup(app.sheet).orient === 'auto' ? { orient: 'portrait' } : null })) return;
+    window.addEventListener('afterprint', () => { if (!busy) unmountLater(); }, { once: true });
   });
 }

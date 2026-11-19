@@ -67,7 +67,7 @@ export function buildToolbar(app, host) {
     sizeInp.addEventListener('keydown', e => { if (e.key === 'Enter') { const v = parseFloat(sizeInp.value); if (v > 0 && v < 400) app.cmd('fontSize', v); app.grid.focus(); } if (e.key === 'Escape') app.grid.focus(); });
     sizeInp.addEventListener('focus', () => { sizeInp.select(); openMenu(SIZES.map(s => ({ label: String(s), run: () => app.cmd('fontSize', s) })), sizeInp.getBoundingClientRect()); });
     refs.size = sizeInp;
-    const zoomBtn = el('button.tb-btn.tb-zoom', { type: 'button', 'data-tip': `Zoom|${K('zoomIn')} / ${K('zoomOut')}`, onmousedown: e => e.preventDefault(), onclick: e => openMenu(['Sesuaikan', 50, 75, 90, 100, 125, 150, 200].map(z => (z === 'Sesuaikan' ? { label: 'Sesuaikan lebar', run: () => fitZoom(app) } : { label: z + '%', checked: () => Math.round(app.grid.z * 100) === z, run: () => app.setZoom(z / 100) })), e.currentTarget.getBoundingClientRect()) }, el('span.tb-zoom-val', '100%'), icon('arrow_drop_down', 'caret'));
+    const zoomBtn = el('button.tb-btn.tb-zoom', { type: 'button', 'data-tip': `Zoom|${K('zoomIn')} / ${K('zoomOut')}`, onmousedown: e => e.preventDefault(), onclick: e => openMenu([...['Sesuaikan', 50, 75, 90, 100, 125, 150, 200].map(z => (z === 'Sesuaikan' ? { label: 'Sesuaikan lebar', run: () => fitZoom(app) } : { label: z + '%', checked: () => Math.round(app.grid.z * 100) === z, run: () => app.setZoom(z / 100) })), { sep: true }, { label: 'Sensitivitas zoom', icon: 'pinch', sub: () => app.zoomSensItems() }], e.currentTarget.getBoundingClientRect()) }, el('span.tb-zoom-val', '100%'), icon('arrow_drop_down', 'caret'));
     refs.zoom = zoomBtn;
     return [
       { id: 'hist', pri: 0, items: [

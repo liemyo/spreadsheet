@@ -1293,9 +1293,46 @@ export class Grid {
       if (this.hit(x, y, true).area === 'fill') e.preventDefault();
     }, { passive: false });
     sc.addEventListener('touchmove', e => { if (this.drag?.touch) e.preventDefault(); }, { passive: false });
+    // Zoom gestures, scaled by Tampilan › Zoom › Sensitivitas (default Rendah). A trackpad pinch arrives as many small
+    // Ctrl+wheel events (Chrome/Edge/Firefox) or Safari gesture events; each used to add 10 % → far too jumpy.
+    // Now the zoom follows the size of the movement (×sensitivity) around the point under the fingers / pointer.
     sc.addEventListener('wheel', e => {
-      if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.app.setZoom(this.z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); }
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const s = this.app.zoomSens(), f = this.focal(e.clientX, e.clientY);
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+      if (Math.abs(dy) >= 50 && Number.isInteger(dy)) {   // mouse wheel notch: one step, at most every 80 ms
+        if (e.timeStamp - (this._wheelT || 0) < 80) return;
+        this._wheelT = e.timeStamp;
+        return this.zoomTo(this.zt() + (dy < 0 ? s.step : -s.step), f);
+      }
+      this.zoomTo(this.zt() * Math.exp(-Math.max(-40, Math.min(40, dy)) * 0.01 * s.w), f);
     }, { passive: false });
+    // two-finger pinch on phones / tablets (amatu.js stops the page zoom, the sheet zooms instead)
+    const tdist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    sc.addEventListener('touchstart', e => {
+      if (e.touches.length !== 2 || this.edit) return;
+      this.tap = null; clearTimeout(this.tapTimer);
+      if (this.drag?.touch) this.drag = null;
+      this.pinch = { d: Math.max(20, tdist(e.touches)), z: this.zt() };
+    }, { passive: true });
+    sc.addEventListener('touchmove', e => {
+      if (!this.pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const t = e.touches, s = this.app.zoomSens();
+      this.zoomTo(this.pinch.z * Math.pow(tdist(t) / this.pinch.d, s.p), this.focal((t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2));
+    }, { passive: false });
+    const pinchEnd = e => { if (this.pinch && e.touches.length < 2) this.pinch = null; };
+    sc.addEventListener('touchend', pinchEnd, { passive: true });
+    sc.addEventListener('touchcancel', pinchEnd, { passive: true });
+    // Safari on a Mac trackpad: gesture events with a running scale (iOS uses the touch pinch above)
+    sc.addEventListener('gesturestart', e => { if (this.pinch) return; e.preventDefault(); this.gz = { z: this.zt() }; });
+    sc.addEventListener('gesturechange', e => {
+      if (this.pinch || !this.gz) return;
+      e.preventDefault();
+      this.zoomTo(this.gz.z * Math.pow(e.scale || 1, this.app.zoomSens().p), this.focal(e.clientX, e.clientY));
+    });
+    sc.addEventListener('gestureend', () => { this.gz = null; });
     const inp = this.input;
     inp.addEventListener('keydown', e => this.app.onKey(e));
     inp.addEventListener('input', () => this.onInput());
@@ -1770,9 +1807,31 @@ export class Grid {
     this.changed();
   }
 
-  setZoom(z) {
-    const cx = this.sx, cy = this.sy;
-    this.z = clamp(z, 0.5, 2);
+  // zoom target kept unrounded, so tiny gesture steps add up (the shown zoom is rounded to 1 %)
+  zt() { return this._zt != null && Math.abs(this._zt - this.z) < 0.011 ? this._zt : this.z; }
+  // point (px inside the scroller, CSS zoom of the page removed) that should stay put while zooming
+  focal(cx, cy) {
+    const r = this.scroller.getBoundingClientRect(), k = (this.scroller.offsetWidth && r.width / this.scroller.offsetWidth) || 1;
+    return { x: (cx - r.left) / k, y: (cy - r.top) / k };
+  }
+  // gestures fire faster than frames: apply the latest target once per frame
+  zoomTo(z, f) {
+    this._zt = clamp(z, 0.5, 2);
+    this._zf = f;
+    if (this._zraf) return;
+    this._zraf = requestAnimationFrame(() => {
+      this._zraf = 0;
+      const t = this._zt, ff = this._zf;
+      this.app.setZoom(t, ff);
+      this._zt = t;
+    });
+  }
+
+  setZoom(z, f) {
+    const z0 = this.z, nz = clamp(z, 0.5, 2);
+    let cx = this.sx, cy = this.sy;
+    if (f && z0 !== nz) { cx = Math.max(0, cx + f.x / z0 - f.x / nz); cy = Math.max(0, cy + f.y / z0 - f.y / nz); }
+    this.z = nz;
     this.g = null;
     this.measureCache.clear();
     this.geo();

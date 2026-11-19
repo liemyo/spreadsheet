@@ -242,6 +242,228 @@ function loan() {
   });
 }
 
+/* ---------- Timeline (Harian / Mingguan / Bulanan) ---------- */
+// Skala dipilih dari dropdown B4; baris 5–6 (tersembunyi) berisi tanggal akhir/awal tiap kolom periode, header bulan /
+// tahun, nomor periode dan bilah jadwal (format bersyarat) mengikuti otomatis. Bilah tua = progres, muda = rencana.
+const TL_N = 40, TL_ROWS = 40;
+const monday = () => { const t = today(); return t - ((new Date().getDay() + 6) % 7); };
+function timelineSheet(wb, sh, { title, sub, scale, start, pic, tasks, picHead = 'Penanggung jawab', colors = {} }) {
+  const P = { bar: '#f6b26b', done: '#e8710a', head: '#6d28d9', head2: '#8b5cf6', label: '#fff59d', ...colors };
+  const first = 8, last = first + TL_N - 1, L = colLetter, r0 = 8, r1 = r0 + TL_ROWS - 1;   // columns I.., task rows 9..
+  widths(sh, [34, 250, 140, 88, 62, 88, 64, 104]);
+  for (let c = first; c <= last; c++) sh.colW.set(c, 32);
+  put(wb, sh, 'A1', title, { b: true, fs: 18, color: P.head });
+  put(wb, sh, 'D1', sub, { color: '#5f6368', i: true });
+  row(wb, sh, 'A2', ['', 'Nama proyek', 'Proyek baru']); put(wb, sh, 'B2', null, { b: true }); put(wb, sh, 'C2', null, { bg: '#fef7e0' });
+  row(wb, sh, 'A3', ['', 'Tanggal mulai', String(start)]); put(wb, sh, 'B3', null, { b: true }); put(wb, sh, 'C3', null, { fmt: 'd mmm yyyy', bg: '#fef7e0', ha: 'left' });
+  row(wb, sh, 'A4', ['', 'Skala timeline', scale]); put(wb, sh, 'B4', null, { b: true }); put(wb, sh, 'C4', null, { bg: '#fef7e0', b: true, color: P.head });
+  put(wb, sh, 'D4', 'pilih Harian · Mingguan · Bulanan — kolom jadwal menyesuaikan otomatis', { color: '#5f6368', fs: 9 });
+  sh.dv.push({ id: uid('dv'), type: 'list', ranges: [{ r1: 3, c1: 2, r2: 3, c2: 2 }], items: ['Harian', 'Mingguan', 'Bulanan'], colors: ['#ede9fe', '#ddd6fe', '#c4b5fd'], chip: 'arrow', strict: true });
+  // hidden helper rows: 5 = period end, 6 = period start
+  for (let c = first; c <= last; c++) {
+    const C = L(c), prev = L(c - 1);
+    setInput(wb, sh, 5, c, c === first ? '=IF($C$4="Harian",$C$3,IF($C$4="Mingguan",$C$3-WEEKDAY($C$3,3),DATE(YEAR($C$3),MONTH($C$3),1)))'
+      : `=IF($C$4="Harian",${prev}6+1,IF($C$4="Mingguan",${prev}6+7,EDATE(${prev}6,1)))`);
+    setInput(wb, sh, 4, c, `=IF($C$4="Harian",${C}6,IF($C$4="Mingguan",${C}6+6,EDATE(${C}6,1)-1))`);
+    const f = 'IF($C$4="Bulanan","yyyy","mmm")';
+    setInput(wb, sh, 6, c, c === first ? `=TEXT(${C}6,${f})` : `=IF(TEXT(${C}6,${f})<>TEXT(${prev}6,${f}),TEXT(${C}6,${f}),"")`);
+    setInput(wb, sh, 7, c, `=IF($C$4="Harian",DAY(${C}6),IF($C$4="Mingguan",COLUMN()-${first},TEXT(${C}6,"mmm")))`);
+    sh.setStyle(4, c, { fmt: 'dd/mm/yy' }); sh.setStyle(5, c, { fmt: 'dd/mm/yy' });
+    sh.setStyle(6, c, { b: true, color: '#ffffff', bg: P.head, fs: 9, va: 'middle' });
+    sh.setStyle(7, c, { b: true, color: '#ffffff', bg: P.head2, fs: 8, ha: 'center', va: 'middle' });
+  }
+  sh.hiddenR.add(4); sh.hiddenR.add(5);
+  styleRange(sh, `A7:H7`, { bg: P.head, color: '#ffffff', b: true, fs: 11, va: 'middle' });
+  put(wb, sh, 'B7', 'Jadwal kegiatan', null);
+  row(wb, sh, 'A8', ['No', 'Kegiatan', picHead, 'Mulai', 'Durasi (hari)', 'Selesai', 'Progres', 'Status'], { b: true, bg: P.label, va: 'middle', wrap: 'wrap' });
+  styleRange(sh, 'D8:G8', { ha: 'center' });
+  sh.rowH.set(6, 24); sh.rowH.set(7, 34);
+  // tasks: [kegiatan, pic, hari ke- (dari tanggal mulai), durasi, progres]
+  for (let i = 0; i < TL_ROWS; i++) {
+    const r = r0 + i, R = r + 1, t = tasks[i];
+    setInput(wb, sh, r, 0, `=IF(B${R}="","",COUNTA($B$${r0 + 1}:B${R}))`);
+    setInput(wb, sh, r, 5, `=IF(OR(D${R}="",E${R}=""),"",D${R}+E${R}-1)`);
+    if (t) {
+      row(wb, sh, 'B' + R, [t[0], t[1], `=$C$3+${t[2]}`, t[3]]);
+      setInput(wb, sh, r, 6, String(t[4] * 100) + '%');
+      setInput(wb, sh, r, 7, t[4] >= 1 ? 'Selesai' : t[4] > 0 ? 'Berjalan' : 'Belum mulai');
+    }
+  }
+  styleRange(sh, `A${r0 + 1}:A${r1 + 1}`, { ha: 'center', color: '#5f6368' });
+  styleRange(sh, `D${r0 + 1}:D${r1 + 1}`, { fmt: 'dd/mm/yy', ha: 'center' });
+  styleRange(sh, `E${r0 + 1}:E${r1 + 1}`, { ha: 'center' });
+  styleRange(sh, `F${r0 + 1}:F${r1 + 1}`, { fmt: 'dd/mm/yy', ha: 'center' });
+  styleRange(sh, `G${r0 + 1}:G${r1 + 1}`, { fmt: '0%', ha: 'center' });
+  styleRange(sh, `A${r0 + 1}:H${r1 + 1}`, { bb: thin });
+  sh.dv.push({ id: uid('dv'), type: 'list', ranges: [{ r1: r0, c1: 2, r2: r1, c2: 2 }], items: pic, colors: pic.map(() => '#f3e8ff'), chip: 'arrow', strict: false });
+  sh.dv.push({ id: uid('dv'), type: 'list', ranges: [{ r1: r0, c1: 7, r2: r1, c2: 7 }], items: ['Belum mulai', 'Berjalan', 'Selesai', 'Tertunda'], colors: ['#e8eaed', '#c6dafc', '#ceead6', '#fad2cf'], chip: 'chip', strict: true });
+  const g = { r1: r0, c1: first, r2: r1, c2: last }, I = L(first);
+  sh.cf.push({ id: uid('cf'), ranges: [g], type: 'formula', v1: `=AND(ISNUMBER($D${r0 + 1}),$G${r0 + 1}>0,$D${r0 + 1}<=${I}$5,$D${r0 + 1}+$E${r0 + 1}*$G${r0 + 1}-1>=${I}$6)`, style: { bg: P.done } });
+  sh.cf.push({ id: uid('cf'), ranges: [g], type: 'formula', v1: `=AND(ISNUMBER($D${r0 + 1}),$D${r0 + 1}<=${I}$5,$F${r0 + 1}>=${I}$6)`, style: { bg: P.bar } });
+  sh.cf.push({ id: uid('cf'), ranges: [g], type: 'formula', v1: `=AND($C$4="Harian",WEEKDAY(${I}$6,2)>5)`, style: { bg: '#f1f3f4' } });
+  sh.cf.push({ id: uid('cf'), ranges: [{ r1: 6, c1: first, r2: 7, c2: last }], type: 'formula', v1: `=AND(TODAY()>=${I}$6,TODAY()<=${I}$5)`, style: { bg: '#fbbc04', color: '#202124' } });
+  sh.cf.push({ id: uid('cf'), ranges: [g], type: 'formula', v1: `=AND(TODAY()>=${I}$6,TODAY()<=${I}$5)`, style: { bg: '#fef7e0' } });
+  sh.cf.push({ id: uid('cf'), ranges: [{ r1: r0, c1: 5, r2: r1, c2: 5 }], type: 'formula', v1: `=AND(ISNUMBER($F${r0 + 1}),$F${r0 + 1}<TODAY(),$G${r0 + 1}<1)`, style: { color: '#c5221f', b: true } });
+  sh.cf.push({ id: uid('cf'), ranges: [{ r1: r0, c1: 6, r2: r1, c2: 6 }], type: 'bar', bar: { color: '#34a853' } });
+  // vertical lines between periods like a paper schedule
+  for (let r = 6; r <= r1; r++) for (let c = first; c <= last; c++) sh.setStyle(r, c, { ...sh.styleOf(r, c), br: { w: 1, style: 'solid', color: r >= r0 ? '#e0e0e0' : '#ffffff' } });
+  sh.freezeR = 8; sh.freezeC = 2;
+  sh.grid = true;
+  sh.page = { v: 2, orient: 'landscape', fit: 'width', title: false, num: true, hdr: true, auto: true, hc: false };
+}
+function timeline() {
+  return make('Timeline Proyek', (wb, sh) => {
+    sh.name = 'Timeline';
+    const pic = ['Manajer Proyek', 'Tim Teknik', 'Admin & Legal', 'Pengadaan', 'Kontraktor', 'Quality Control', 'Klien / Owner', 'Keuangan'];
+    timelineSheet(wb, sh, {
+      title: 'Timeline Proyek', sub: 'Isi kegiatan, tanggal mulai & durasi — bilah jadwal terisi otomatis', scale: 'Mingguan', start: monday(), pic,
+      tasks: [
+        ['Inisiasi & kick-off meeting', 'Manajer Proyek', 0, 3, 1],
+        ['Survei lapangan & pengukuran', 'Tim Teknik', 2, 6, 1],
+        ['Perencanaan & desain teknis', 'Tim Teknik', 7, 14, 0.6],
+        ['Perizinan & administrasi', 'Admin & Legal', 7, 21, 0.4],
+        ['Rencana anggaran biaya (RAB)', 'Keuangan', 14, 7, 0.2],
+        ['Pengadaan material & alat', 'Pengadaan', 21, 14, 0],
+        ['Mobilisasi alat & tenaga kerja', 'Kontraktor', 32, 4, 0],
+        ['Pelaksanaan pekerjaan tahap 1', 'Kontraktor', 35, 28, 0],
+        ['Pelaksanaan pekerjaan tahap 2', 'Kontraktor', 63, 28, 0],
+        ['Pengawasan & quality control', 'Quality Control', 35, 56, 0],
+        ['Uji coba / commissioning', 'Tim Teknik', 91, 7, 0],
+        ['Serah terima & dokumentasi', 'Manajer Proyek', 98, 5, 0],
+      ],
+    });
+  });
+}
+function timelineHR() {
+  return make('Timeline Rekrutmen', (wb, sh) => {
+    sh.name = 'Timeline';
+    timelineSheet(wb, sh, {
+      title: 'Timeline Proses Rekrutmen', sub: 'Jabatan: ____________ · Perkiraan karyawan mulai: ____________', scale: 'Mingguan', start: monday(), picHead: 'Tanggung jawab',
+      pic: ['HR', 'Hiring Manager', 'HR/Hiring Manager', 'Klien'],
+      tasks: [
+        ['Konsultasi awal', 'HR/Hiring Manager', 0, 5, 1],
+        ['Pembuatan kontrak', 'HR/Hiring Manager', 0, 5, 1],
+        ['Kriteria seleksi & pengumuman lowongan', 'HR/Hiring Manager', 7, 14, 0.5],
+        ['Riset kampanye pemasaran / iklan', 'HR/Hiring Manager', 7, 14, 0.3],
+        ['Pemasaran / outreach / sourcing', 'HR', 21, 28, 0],
+        ['Penyaringan pelamar terbaik', 'HR', 28, 28, 0],
+        ['Kandidat teratas diajukan ke klien', 'HR/Hiring Manager', 56, 7, 0],
+        ['Jadwal & koordinasi wawancara', 'HR', 63, 14, 0],
+        ['Pertanyaan wawancara & seleksi akhir', 'HR/Hiring Manager', 49, 28, 0],
+        ['Wawancara tahap pertama', 'HR/Hiring Manager', 77, 7, 0],
+        ['Cek latar belakang / referensi finalis', 'HR', 84, 14, 0],
+        ['Wawancara akhir', 'HR/Hiring Manager', 98, 7, 0],
+        ['Penawaran kerja', 'Hiring Manager', 105, 7, 0],
+        ['Karyawan baru mulai bekerja', 'HR', 133, 5, 0],
+      ],
+      colors: { head: '#7c3aed', head2: '#8b5cf6', bar: '#f9a65a', done: '#e8710a' },
+    });
+  });
+}
+
+/* ---------- Kurva S ---------- */
+// Bobot = biaya / total biaya; bobot tiap pekerjaan dibagi rata ke periode jalannya (Mulai, Durasi). Baris bawah:
+// rencana per periode, kumulatif rencana, realisasi (isi), kumulatif realisasi, deviasi; tabel bantu + diagram garis Kurva S.
+const KS_N = 24;
+function kurvaS() {
+  return make('Kurva S Proyek', (wb, sh) => {
+    sh.name = 'Kurva S';
+    const items = [
+      ['Pekerjaan persiapan (mobilisasi, direksi keet, pengukuran)', 25000000, 1, 2],
+      ['Pekerjaan tanah (galian & urugan)', 40000000, 2, 3],
+      ['Pekerjaan pondasi', 120000000, 3, 4],
+      ['Pekerjaan beton struktur (sloof, kolom, balok, plat)', 350000000, 5, 8],
+      ['Pekerjaan dinding & plesteran', 150000000, 9, 6],
+      ['Pekerjaan mekanikal & elektrikal', 90000000, 10, 10],
+      ['Pekerjaan sanitasi & plumbing', 55000000, 11, 8],
+      ['Pekerjaan rangka & penutup atap', 110000000, 12, 4],
+      ['Pekerjaan kusen, pintu & jendela', 80000000, 13, 4],
+      ['Pekerjaan lantai & keramik', 95000000, 15, 4],
+      ['Pekerjaan plafon', 60000000, 16, 3],
+      ['Pekerjaan pengecatan', 70000000, 18, 3],
+      ['Pekerjaan lain-lain & pembersihan akhir', 15000000, 20, 1],
+    ];
+    const T = items.length, first = 6, last = first + KS_N - 1, L = colLetter;
+    const r0 = 8, rl = r0 + T - 1;               // task rows (0-based)
+    const rTot = rl + 1, rPlan = rl + 2, rCum = rl + 3, rReal = rl + 4, rRCum = rl + 5, rDev = rl + 6;
+    const X = r => r + 1;                         // 1-based row number in formulas
+    widths(sh, [34, 330, 120, 70, 62, 62]);
+    for (let c = first; c <= last; c++) sh.colW.set(c, 58);
+    const H2 = { b: true, color: '#ffffff', bg: '#0b5394', va: 'middle', ha: 'center', wrap: 'wrap' };
+    put(wb, sh, 'A1', 'KURVA S — JADWAL PELAKSANAAN PEKERJAAN', { b: true, fs: 16, color: '#0b5394' });
+    row(wb, sh, 'A2', ['', 'Nama proyek', 'Pembangunan Gedung']); put(wb, sh, 'B2', null, { b: true }); put(wb, sh, 'C2', null, { bg: '#fef7e0' });
+    row(wb, sh, 'A3', ['', 'Lokasi', '—']); put(wb, sh, 'B3', null, { b: true }); put(wb, sh, 'C3', null, { bg: '#fef7e0' });
+    row(wb, sh, 'A4', ['', 'Tanggal mulai', String(monday())]); put(wb, sh, 'B4', null, { b: true }); put(wb, sh, 'C4', null, { fmt: 'd mmmm yyyy', bg: '#fef7e0', ha: 'left' });
+    row(wb, sh, 'A5', ['', 'Periode', 'Mingguan']); put(wb, sh, 'B5', null, { b: true }); put(wb, sh, 'C5', null, { bg: '#fef7e0', b: true, color: '#0b5394' });
+    put(wb, sh, 'D5', 'pilih Mingguan / Bulanan · Mulai & Durasi dalam periode · isi baris Realisasi tiap periode', { color: '#5f6368', fs: 9 });
+    sh.dv.push({ id: uid('dv'), type: 'list', ranges: [{ r1: 4, c1: 2, r2: 4, c2: 2 }], items: ['Mingguan', 'Bulanan'], colors: ['#cfe2f3', '#9fc5e8'], chip: 'arrow', strict: true });
+    // header rows 7 (label) and 8 (start date of the period)
+    row(wb, sh, 'A7', ['No', 'Uraian pekerjaan', 'Biaya (Rp)', 'Bobot', 'Mulai', 'Durasi'], H2);
+    row(wb, sh, 'A8', ['', '', '', '(%)', '(ke-)', '(periode)'], { ...H2, fs: 8, b: false });
+    for (let i = 1; i <= KS_N; i++) {
+      const c = first + i - 1;
+      setInput(wb, sh, 6, c, `=IF($C$5="Bulanan","Bulan ","Minggu ")&${i}`);
+      setInput(wb, sh, 7, c, `=IF($C$5="Bulanan",EDATE($C$4,${i - 1}),$C$4+7*${i - 1})`);
+      sh.setStyle(6, c, { ...H2, fs: 9 }); sh.setStyle(7, c, { ...H2, fs: 8, b: false, fmt: 'dd/mm/yy' });
+    }
+    sh.rowH.set(6, 30); sh.rowH.set(7, 22);
+    items.forEach((it, k) => {
+      const r = r0 + k, R = X(r);
+      row(wb, sh, 'A' + R, [k + 1, it[0], it[1], `=IFERROR(C${R}/$C$${X(rTot)},0)`, it[2], it[3]]);
+      for (let i = 1; i <= KS_N; i++) setInput(wb, sh, r, first + i - 1, `=IF(AND(${i}>=$E${R},${i}<=$E${R}+$F${R}-1),$D${R}/$F${R},"")`);
+    });
+    styleRange(sh, `A${X(r0)}:A${X(rl)}`, { ha: 'center' });
+    styleRange(sh, `B${X(r0)}:B${X(rl)}`, { wrap: 'wrap' });
+    styleRange(sh, `C${X(r0)}:C${X(rTot)}`, { fmt: '#,##0' });
+    styleRange(sh, `D${X(r0)}:D${X(rTot)}`, { fmt: '0.00%', ha: 'right' });
+    styleRange(sh, `E${X(r0)}:F${X(rl)}`, { ha: 'center', bg: '#fef7e0' });
+    styleRange(sh, `${L(first)}${X(r0)}:${L(last)}${X(rl)}`, { fmt: '0.00%', fs: 8, ha: 'center', color: '#073763' });
+    for (let k = 0; k < T; k++) sh.rowH.set(r0 + k, 36);
+    // total + S-curve rows
+    row(wb, sh, 'A' + X(rTot), ['', 'JUMLAH', `=SUM(C${X(r0)}:C${X(rl)})`, `=SUM(D${X(r0)}:D${X(rl)})`], { b: true, bt: { w: 2, style: 'solid', color: '#0b5394' } });
+    const lab = { b: true, ha: 'right' };
+    put(wb, sh, 'B' + X(rPlan), 'Rencana per periode', lab);
+    put(wb, sh, 'B' + X(rCum), 'Kumulatif rencana', { ...lab, color: '#0b5394' });
+    put(wb, sh, 'B' + X(rReal), 'Realisasi per periode (isi)', { ...lab, color: '#b45f06' });
+    put(wb, sh, 'B' + X(rRCum), 'Kumulatif realisasi', { ...lab, color: '#b45f06' });
+    put(wb, sh, 'B' + X(rDev), 'Deviasi (realisasi − rencana)', lab);
+    const real = ['0,8%', '1,8%', '3%', '3,2%', '5%', '5,2%'];   // id-ID input: comma decimals
+    for (let i = 1; i <= KS_N; i++) {
+      const c = first + i - 1, C = L(c), P = L(c - 1);
+      setInput(wb, sh, rPlan, c, `=SUM(${C}${X(r0)}:${C}${X(rl)})`);
+      setInput(wb, sh, rCum, c, i === 1 ? `=${C}${X(rPlan)}` : `=${P}${X(rCum)}+${C}${X(rPlan)}`);
+      if (real[i - 1] != null) setInput(wb, sh, rReal, c, real[i - 1]);
+      setInput(wb, sh, rRCum, c, `=IF(${C}${X(rReal)}="","",SUM($${L(first)}${X(rReal)}:${C}${X(rReal)}))`);
+      setInput(wb, sh, rDev, c, `=IF(${C}${X(rRCum)}="","",${C}${X(rRCum)}-${C}${X(rCum)})`);
+    }
+    styleRange(sh, `${L(first)}${X(rPlan)}:${L(last)}${X(rDev)}`, { fmt: '0.00%', fs: 9, ha: 'center' });
+    styleRange(sh, `${L(first)}${X(rCum)}:${L(last)}${X(rCum)}`, { b: true, color: '#0b5394', bg: '#eaf1fb' });
+    styleRange(sh, `${L(first)}${X(rReal)}:${L(last)}${X(rReal)}`, { bg: '#fef7e0' });
+    styleRange(sh, `${L(first)}${X(rRCum)}:${L(last)}${X(rRCum)}`, { b: true, color: '#b45f06', bg: '#fdf1e6' });
+    styleRange(sh, `A${X(r0)}:${L(last)}${X(rl)}`, { bb: { w: 1, style: 'solid', color: '#cfd8e3' } });
+    styleRange(sh, `A${X(rPlan)}:${L(last)}${X(rDev)}`, { bb: thin });
+    // bars of the schedule + deviation colours
+    const g = { r1: r0, c1: first, r2: rl, c2: last };
+    sh.cf.push({ id: uid('cf'), ranges: [g], type: 'formula', v1: `=ISNUMBER(${L(first)}${X(r0)})`, style: { bg: '#9fc5e8' } });
+    sh.cf.push({ id: uid('cf'), ranges: [{ r1: rDev, c1: first, r2: rDev, c2: last }], type: 'num', op: 'lt', v1: '0', style: { color: '#c5221f', b: true, bg: '#fce8e6' } });
+    sh.cf.push({ id: uid('cf'), ranges: [{ r1: rDev, c1: first, r2: rDev, c2: last }], type: 'num', op: 'ge', v1: '0', style: { color: '#188038', b: true } });
+    sh.cf.push({ id: uid('cf'), ranges: [{ r1: 6, c1: first, r2: 7, c2: last }], type: 'formula', v1: `=AND(TODAY()>=${L(first)}$8,TODAY()<IF($C$5="Bulanan",EDATE(${L(first)}$8,1),${L(first)}$8+7))`, style: { bg: '#fbbc04', color: '#202124' } });
+    // helper table (vertical) for the chart
+    const h0 = rDev + 3;
+    put(wb, sh, 'B' + X(h0 - 1), 'Data Kurva S (otomatis)', { b: true, color: '#0b5394' });
+    row(wb, sh, 'B' + X(h0), ['Periode', 'Rencana (%)', 'Realisasi (%)'], { b: true, bg: '#cfe2f3', ha: 'center' });
+    for (let i = 1; i <= KS_N; i++) {
+      const C = L(first + i - 1), r = h0 + i;
+      row(wb, sh, 'B' + X(r), [`=${C}7`, `=ROUND(${C}${X(rCum)}*100,2)`, `=IF(${C}${X(rRCum)}="","",ROUND(${C}${X(rRCum)}*100,2))`]);
+    }
+    styleRange(sh, `C${X(h0 + 1)}:D${X(h0 + KS_N)}`, { fmt: '0.00', ha: 'center' });
+    styleRange(sh, `B${X(h0 + 1)}:D${X(h0 + KS_N)}`, { bb: thin });
+    sh.charts.push({ id: uid('ch'), type: 'line', range: `B${X(h0)}:D${X(h0 + KS_N)}`, anchor: { r: h0 - 1, c: 5 }, dx: 0, dy: 0, w: 760, h: 380, opts: { title: 'Kurva S — kumulatif rencana vs realisasi (%)', legend: 'bottom', headers: 'on', labels: 'on', colors: ['#0b5394', '#e69138'] } });
+    sh.freezeR = 8; sh.freezeC = 2;
+    sh.page = { v: 2, orient: 'landscape', fit: 'width', title: false, num: true, hdr: true, auto: true, hc: false, area: { r1: 0, c1: 0, r2: rDev, c2: last } };
+  });
+}
+
 export const TEMPLATES = [
   { id: 'blank', name: 'Spreadsheet kosong', icon: 'add', desc: 'Mulai dari awal', build: () => newWorkbook() },
   { id: 'welcome', name: 'Spreadsheet kosong', icon: 'add', desc: '', build: () => newWorkbook() },
@@ -251,4 +473,7 @@ export const TEMPLATES = [
   { id: 'sales', name: 'Laporan penjualan', icon: 'monitoring', desc: 'UNIQUE, SUMIF, QUERY, XLOOKUP, diagram', build: sales },
   { id: 'gantt', name: 'Jadwal proyek', icon: 'view_timeline', desc: 'Gantt dengan format bersyarat', build: gantt },
   { id: 'loan', name: 'Simulasi kredit', icon: 'calculate', desc: 'PMT, IPMT, SEQUENCE, SCAN, LAMBDA', build: loan },
+  { id: 'timeline', name: 'Timeline proyek', icon: 'date_range', desc: 'Harian / mingguan / bulanan dari dropdown, bilah otomatis', build: timeline, plan: true },
+  { id: 'timeline-hr', name: 'Timeline rekrutmen', icon: 'event_note', desc: 'Kegiatan + tanggung jawab per minggu', build: timelineHR, plan: true },
+  { id: 'kurvas', name: 'Kurva S proyek', icon: 'stacked_line_chart', desc: 'Bobot, rencana vs realisasi, deviasi, diagram', build: kurvaS, plan: true },
 ];
